@@ -22,8 +22,13 @@ import { loginUser } from "@/services/auth.services";
 import { Spinner } from "@/components/ui/spinner";
 import { useForm } from "react-hook-form";
 import { useState } from "react";
+<<<<<<< HEAD
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import Image from "next/image";
+=======
+import { Eye, EyeOff } from "lucide-react";
+import { toast } from "react-toastify";
+>>>>>>> fe719d3 (feat(shell): add theme store and toast-enabled app providers)
 
 export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
