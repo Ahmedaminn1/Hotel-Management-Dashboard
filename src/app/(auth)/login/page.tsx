@@ -142,7 +142,7 @@ export default function Login() {
               />
             </CardContent>
 
-            <CardFooter className="px-8 pb-10">
+            <CardFooter className="px-8 pb-10 bg-transparent border-0">
               <Button
                 type="submit"
                 className="w-full h-11 bg-primary hover:bg-primary/90 text-white font-semibold transition-all duration-300 transform active:scale-[0.98]"
