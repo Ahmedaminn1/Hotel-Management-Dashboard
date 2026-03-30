@@ -24,10 +24,12 @@ import { useState } from "react";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import Image from "next/image";
 import { signIn } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { toast } from "react-toastify";
 
 
 export default function Login() {
+  const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const form = useForm<loginSchemaType>({
     resolver: zodResolver(loginSchema),
@@ -38,21 +40,23 @@ export default function Login() {
   });
 
   async function onlogin(values: loginSchemaType) {
-    // const data = await loginUser(values);
-    // console.log(data);
-    // if(data.message == "Done"){che
-    //   router.push("/table")
-    // }
+    try {
+      const response = await signIn("credentials", {
+        email: values.email,
+        password: values.password,
+        redirect: false,
+      });
 
-    const response = await signIn("credentials",{
-      email:values.email,
-      password:values.password,
-      callbackUrl: "/dashboard",
-      redirect: true
-    })
-
-    if(!response?.ok){
-      toast.error(response?.error ?? "Login failed")
+      if (response?.ok) {
+        router.push("/dashboard");
+      } else {
+        toast.error(response?.error ?? "Login failed");
+      }
+    } catch (error) {
+      toast.error("Login failed. Please try again.");
+      console.error("Login error", error);
+    } finally {
+      form.reset({ email: values.email, password: "" });
     }
   }
   
@@ -99,7 +103,7 @@ export default function Login() {
                           id="email"
                           type="email"
                           placeholder="Enter Your Email"
-                          className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus-visible:ring-primary/50 focus-visible:border-primary/50"
+                          className="px-10 py-5 mt-2 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus-visible:ring-primary/50 focus-visible:border-primary/50"
                         />
                       </div>
                     </FormControl>
@@ -115,24 +119,33 @@ export default function Login() {
                     <FormLabel className="text-white/80 font-medium">Password</FormLabel>
                     <FormControl>
                       <div className="relative group">
-                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/50 group-focus-within:text-white transition-colors" />
+                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                          <Lock className="h-4 w-4 text-white/50 group-focus-within:text-white transition-colors" />
+                        </div>
                         <Input
                           {...field}
                           id="password"
                           type={showPassword ? "text" : "password"}
                           placeholder="Enter your password"
-                          className="pl-10 pr-10 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus-visible:ring-primary/50 focus-visible:border-primary/50"
+                          autoComplete="current-password"
+                          className="px-10 py-5 mt-2 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus-visible:ring-primary/50 focus-visible:border-primary/50"
                         />
                         <button
                           type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white transition-colors"
+                          onClick={() => setShowPassword((prev) => !prev)}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onMouseUp={(e) => e.preventDefault()}
+                          className="absolute inset-y-0 right-0 flex items-center pr-3 text-white/50 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-primary/70 rounded"
+                          aria-label={showPassword ? "Hide password" : "Show password"}
                         >
                           {showPassword ? (
-                            <EyeOff className="h-4 w-4" />
-                          ) : (
                             <Eye className="h-4 w-4" />
+                          ) : (
+                            <EyeOff className="h-4 w-4" />
                           )}
+                          <span className="sr-only">
+                            {showPassword ? "Hide password" : "Show password"}
+                          </span>
                         </button>
                       </div>
                     </FormControl>
@@ -163,8 +176,8 @@ export default function Login() {
       </Card>
       
       {/* Dynamic Background Accents */}
-      <div className="absolute top-1/4 right-1/4 w-[300px] h-[300px] bg-primary/20 rounded-full blur-[120px] -z-1" />
-      <div className="absolute bottom-1/4 left-1/4 w-[300px] h-[300px] bg-blue-500/20 rounded-full blur-[120px] -z-1" />
+      <div className="absolute top-1/4 right-1/4 w-75 h-75 bg-primary/20 rounded-full blur-[120px] -z-1" />
+      <div className="absolute bottom-1/4 left-1/4 w-75 h-75 bg-blue-500/20 rounded-full blur-[120px] -z-1" />
     </div>
   );
 }
