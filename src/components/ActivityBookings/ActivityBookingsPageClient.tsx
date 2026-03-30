@@ -7,6 +7,7 @@ import ActivityBookingsTableClient, {
 import SubHeader from "@/components/shared/header/SubHeader";
 
 export default function ActivityBookingsPageClient() {
+  
   const tableRef = useRef<ActivityBookingsTableClientHandle>(null);
 
   return (
