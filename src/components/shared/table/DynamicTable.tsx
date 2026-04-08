@@ -9,16 +9,23 @@ import TableHeader from "./TableHeader";
 import TableBody from "./TableBody";
 import Pagination from "./Pagination";
 import MobileCard, { MobileCardSkeleton } from "./MobileCard";
+import { Skeleton } from "@/components/ui/skeleton";
+import { clampPage, getTotalPages, paginateCollection } from "@/lib/pagination";
 
 export default function DynamicTable<T extends object>({
   columns,
   data,
   isLoading = false,
   pageSize: initialPageSize = 10,
+  mode = "client",
+  totalEntries,
+  onQueryChange,
   searchPlaceholder = "Search...",
   filtersConfig = [],
   actions,
+  highlightedRowKeys = [],
 }: DynamicTableProps<T>) {
+  const isServerMode = mode === "server";
   const enabledActions = useMemo(() => {
     if (!actions || actions.length === 0) return [];
 
@@ -46,7 +53,8 @@ export default function DynamicTable<T extends object>({
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(initialPageSize);
   const tableContainerRef = useRef<HTMLDivElement>(null);
-  const previousPageRef = useRef(currentPage);
+  const desktopScrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollOffset = 96;
 
   const filterKey = useMemo(() => JSON.stringify(filters), [filters]);
 
@@ -66,12 +74,15 @@ export default function DynamicTable<T extends object>({
   }, [debouncedSearchTerm, filterKey]);
 
   useEffect(() => {
-    if (previousPageRef.current !== currentPage) {
-      tableContainerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-
-    previousPageRef.current = currentPage;
-  }, [currentPage]);
+    if (!isServerMode || typeof onQueryChange !== "function") return;
+    onQueryChange({
+      page: currentPage,
+      pageSize,
+      search: debouncedSearchTerm.trim(),
+      filters,
+      sort: sortConfig,
+    });
+  }, [isServerMode, onQueryChange, currentPage, pageSize, debouncedSearchTerm, filters, sortConfig]);
 
   const handleSearch = useCallback((value: string) => {
     setSearchTerm(value);
@@ -131,8 +142,30 @@ export default function DynamicTable<T extends object>({
   }, []);
 
   const handlePageChange = useCallback((page: number) => {
-    setCurrentPage(page);
-  }, []);
+    const nextPage = Math.max(1, page);
+    if (nextPage === currentPage) return;
+
+    setCurrentPage(nextPage);
+
+    window.requestAnimationFrame(() => {
+      const desktopContainer = desktopScrollContainerRef.current;
+      if (desktopContainer) {
+        desktopContainer.scrollTo({
+          top: 0,
+          behavior: "smooth",
+        });
+      }
+
+      const container = tableContainerRef.current;
+      if (!container) return;
+
+      const nextTop = Math.max(window.scrollY + container.getBoundingClientRect().top - scrollOffset, 0);
+      window.scrollTo({
+        top: nextTop,
+        behavior: "smooth",
+      });
+    });
+  }, [currentPage]);
 
   const handleReset = useCallback(() => {
     setSearchTerm("");
@@ -156,6 +189,7 @@ export default function DynamicTable<T extends object>({
   }, [searchTerm, filters, sortConfig]);
 
   const filteredData = useMemo(() => {
+    if (isServerMode) return data;
     let result = [...data];
 
     const q = debouncedSearchTerm.trim().toLowerCase();
@@ -214,9 +248,10 @@ export default function DynamicTable<T extends object>({
     });
 
     return result;
-  }, [data, debouncedSearchTerm, filters, filtersConfig, columns]);
+  }, [isServerMode, data, debouncedSearchTerm, filters, filtersConfig, columns]);
 
   const sortedData = useMemo(() => {
+    if (isServerMode) return filteredData;
     if (!sortConfig) return filteredData;
 
     const column = columns.find((item) => item.key === sortConfig.key);
@@ -239,51 +274,79 @@ export default function DynamicTable<T extends object>({
 
       return sortConfig.direction === "asc" ? comparison : -comparison;
     });
-  }, [filteredData, sortConfig, columns]);
+  }, [isServerMode, filteredData, sortConfig, columns]);
+
+  const effectiveTotalEntries =
+    isServerMode && typeof totalEntries === "number" ? totalEntries : sortedData.length;
+  const totalPages = getTotalPages(effectiveTotalEntries, pageSize, isLoading);
+  const safeCurrentPage = clampPage(currentPage, totalPages);
+
+  useEffect(() => {
+    if (safeCurrentPage !== currentPage) {
+      setCurrentPage(safeCurrentPage);
+    }
+  }, [currentPage, safeCurrentPage]);
 
   const paginatedData = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return sortedData.slice(start, start + pageSize);
-  }, [sortedData, currentPage, pageSize]);
+    if (isServerMode) return sortedData;
+    return paginateCollection(sortedData, safeCurrentPage, pageSize);
+  }, [isServerMode, sortedData, safeCurrentPage, pageSize]);
 
   const mobileSkeletonDetailCount = useMemo(() => {
     const dataColumns = computedColumns.filter((column) => column.type !== "action-dropdown");
     return Math.max(2, Math.min(4, Math.max(dataColumns.length - 1, 1)));
   }, [computedColumns]);
   const hasFilterPanel = filtersConfig.length > 0 || columns.some((column) => column.sortable);
-
-  const totalPages = isLoading ? 1 : Math.max(1, Math.ceil(sortedData.length / pageSize));
+  const showControlSkeleton = isLoading && data.length === 0 && !hasActiveFilters && searchTerm.length === 0;
 
   return (
     <div ref={tableContainerRef} className="w-full">
-      <div className="sticky top-16 z-30 rounded-t-[28px] border-b border-border bg-card/95 py-4 backdrop-blur-md">
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-3">
-            <SearchBar
-              searchTerm={searchTerm}
-              onSearchChange={handleSearch}
-              placeholder={searchPlaceholder}
-              className="flex-1"
-            />
+      <div className="sticky top-16 z-30 rounded-t-[28px] border-b border-border bg-card/95 py-3 backdrop-blur-md">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            {showControlSkeleton ? (
+              <>
+                <Skeleton className="h-10 flex-1 rounded-full lg:max-w-md xl:max-w-sm" />
+                {hasFilterPanel ? (
+                  <>
+                    <div className="hidden flex-1 items-center justify-end gap-2 lg:flex">
+                      <Skeleton className="h-10 w-32 rounded-2xl" />
+                      <Skeleton className="h-10 w-28 rounded-2xl" />
+                      <Skeleton className="h-10 w-24 rounded-2xl" />
+                    </div>
+                    <Skeleton className="h-10 w-10 rounded-2xl lg:hidden" />
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <SearchBar
+                  searchTerm={searchTerm}
+                  onSearchChange={handleSearch}
+                  placeholder={searchPlaceholder}
+                  className="flex-1"
+                />
 
-            {hasFilterPanel ? (
-              <FiltersPanel
-                columns={columns}
-                filtersConfig={filtersConfig}
-                filters={filters}
-                sortConfig={sortConfig}
-                onFilterChange={handleFilterChange}
-                onSortColumnChange={handleMobileSortChange}
-                onSortDirectionToggle={handleSortDirectionToggle}
-                hasActiveFilters={hasActiveFilters}
-                onReset={handleReset}
-              />
-            ) : null}
+                {hasFilterPanel ? (
+                  <FiltersPanel
+                    columns={columns}
+                    filtersConfig={filtersConfig}
+                    filters={filters}
+                    sortConfig={sortConfig}
+                    onFilterChange={handleFilterChange}
+                    onSortColumnChange={handleMobileSortChange}
+                    onSortDirectionToggle={handleSortDirectionToggle}
+                    hasActiveFilters={hasActiveFilters}
+                    onReset={handleReset}
+                  />
+                ) : null}
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      <div className="pt-4 lg:hidden">
+      <div className="pt-3 lg:hidden">
         <div className="rounded-[30px] border border-border/70 bg-[linear-gradient(180deg,color-mix(in_srgb,var(--primary)_4%,transparent),transparent_32%),var(--color-card)] p-3 shadow-inner shadow-black/[0.03]">
           {isLoading ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -301,19 +364,25 @@ export default function DynamicTable<T extends object>({
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {paginatedData.map((row, rowIndex) => (
+                (() => {
+                  const rowKey = resolveRowKey(row, (safeCurrentPage - 1) * pageSize + rowIndex);
+                  return (
                 <MobileCard
-                  key={resolveRowKey(row, (currentPage - 1) * pageSize + rowIndex)}
+                  key={rowKey}
                   row={row}
                   columns={computedColumns}
-                  itemNumber={(currentPage - 1) * pageSize + rowIndex + 1}
+                  itemNumber={(safeCurrentPage - 1) * pageSize + rowIndex + 1}
+                  isHighlighted={highlightedRowKeys.includes(rowKey)}
                 />
+                  );
+                })()
               ))}
             </div>
           )}
         </div>
       </div>
 
-      <div className="hidden overflow-x-auto lg:block">
+      <div ref={desktopScrollContainerRef} className="hidden max-h-[36rem] overflow-auto bg-card/30 lg:block">
         <table className="w-full text-left text-sm">
           <TableHeader
             columns={computedColumns}
@@ -323,20 +392,33 @@ export default function DynamicTable<T extends object>({
           <TableBody
             data={paginatedData}
             columns={computedColumns}
-            startIndex={(currentPage - 1) * pageSize}
+            startIndex={(safeCurrentPage - 1) * pageSize}
             isLoading={isLoading}
             skeletonRowCount={pageSize}
+            highlightedRowKeys={highlightedRowKeys}
           />
         </table>
       </div>
 
-      <Pagination
-        currentPage={currentPage}
-        totalPages={totalPages}
-        onPageChange={handlePageChange}
-        pageSize={pageSize}
-        totalEntries={isLoading ? pageSize : sortedData.length}
-      />
+      {showControlSkeleton ? (
+        <div className="flex flex-col gap-4 rounded-b-[28px] border-t border-border px-2 pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <Skeleton className="h-4 w-48 rounded-full" />
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end">
+            <Skeleton className="h-10 w-10 rounded-xl" />
+            <Skeleton className="h-10 w-10 rounded-xl" />
+            <Skeleton className="h-10 w-10 rounded-xl" />
+            <Skeleton className="h-10 w-10 rounded-xl" />
+          </div>
+        </div>
+      ) : (
+        <Pagination
+          currentPage={safeCurrentPage}
+          totalPages={totalPages}
+          onPageChange={handlePageChange}
+          pageSize={pageSize}
+          totalEntries={isLoading ? pageSize : effectiveTotalEntries}
+        />
+      )}
     </div>
   );
 }

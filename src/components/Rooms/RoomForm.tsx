@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Plus, Trash2, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -10,7 +10,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { RoomDraft, RoomType } from "./data";
-import { fetchFacilities, type Facility } from "@/lib/facilities";
+import { fetchRoomAmenities } from "@/lib/room-amenities";
+import type { RoomAmenity } from "@/types/room-amenity";
 import Image from "next/image";
 
 interface RoomFormProps {
@@ -27,29 +28,23 @@ const roomTypeOptions: { label: string; value: RoomType }[] = [
 ];
 
 export default function RoomForm({ draft, onChange }: RoomFormProps) {
-  const [formData, setFormData] = useState<RoomDraft>(draft);
-  const [allFacilities, setAllFacilities] = useState<Facility[]>([]);
+  const [allAmenities, setAllAmenities] = useState<RoomAmenity[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
 
   useEffect(() => {
-    setFormData(draft);
-  }, [draft]);
-
-  useEffect(() => {
-    const loadFacilities = async () => {
+    const loadAmenities = async () => {
       try {
-        const data = await fetchFacilities();
-        setAllFacilities(data);
+        const data = await fetchRoomAmenities();
+        setAllAmenities(data);
       } catch (error) {
-        console.error("Failed to load facilities:", error);
+        console.error("Failed to load room amenities:", error);
       }
     };
-    void loadFacilities();
+    void loadAmenities();
   }, []);
 
   const handleChange = <K extends keyof RoomDraft>(key: K, value: RoomDraft[K]) => {
-    const updated = { ...formData, [key]: value };
-    setFormData(updated);
+    const updated = { ...draft, [key]: value };
     onChange(updated);
   };
 
@@ -63,14 +58,14 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
     handleChange(key, (Number.isNaN(parsed) ? 0 : parsed) as RoomDraft[K]);
   };
 
-  const handleFacilityToggle = (facilityId: string) => {
-    if (!facilityId || facilityId === "undefined") return;
+  const handleAmenityToggle = (amenityId: string) => {
+    if (!amenityId || amenityId === "undefined") return;
     
-    const current = formData.facilities || [];
-    const updated = current.includes(facilityId)
-      ? current.filter((id) => id !== facilityId)
-      : [...current, facilityId];
-    handleChange("facilities", updated);
+    const current = draft.amenities || [];
+    const updated = current.includes(amenityId)
+      ? current.filter((id) => id !== amenityId)
+      : [...current, amenityId];
+    handleChange("amenities", updated);
   };
 
   const handleImagesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -78,7 +73,7 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
     if (!files || files.length === 0) return;
 
     const newFiles = Array.from(files);
-    const updatedFiles = [...(formData.imageFiles || []), ...newFiles];
+    const updatedFiles = [...(draft.imageFiles || []), ...newFiles];
     
     const newPreviews = newFiles.map(file => URL.createObjectURL(file));
     setImagePreviews(prev => [...prev, ...newPreviews]);
@@ -87,7 +82,7 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
   };
 
   const removeImageFile = (index: number) => {
-    const updatedFiles = (formData.imageFiles || []).filter((_, i) => i !== index);
+    const updatedFiles = (draft.imageFiles || []).filter((_, i) => i !== index);
     const updatedPreviews = imagePreviews.filter((_, i) => i !== index);
     
     setImagePreviews(updatedPreviews);
@@ -95,10 +90,12 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
   };
 
   const removeExistingImage = (publicId: string) => {
-    const updatedImages = formData.roomImages.filter(img => img.public_id !== publicId);
-    handleChange("roomImages", updatedImages);
-    // Note: Backend handle deletedImages array in some implementation, 
-    // but here we just update the roomImages object.
+    const updatedImages = draft.roomImages.filter(img => img.public_id !== publicId);
+    onChange({
+      ...draft,
+      roomImages: updatedImages,
+      deletedImageIds: [...(draft.deletedImageIds || []), publicId],
+    });
   };
 
   return (
@@ -109,7 +106,7 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
               {/* Existing Images */}
-              {formData.roomImages?.filter(Boolean).map((img) => (
+              {draft.roomImages?.filter(Boolean).map((img) => (
                 <div key={img.public_id || Math.random().toString()} className="group relative aspect-video overflow-hidden rounded-2xl border border-border bg-muted">
                   {img.secure_url && (
                     <Image src={img.secure_url} alt="Room" fill className="object-cover" />
@@ -150,10 +147,10 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
         <label className="space-y-2">
           <span className="font-main text-sm font-semibold text-foreground">Room Name</span>
           <input
-            value={formData.roomName}
+            value={draft.roomName}
             onChange={(e) => handleChange("roomName", e.target.value)}
             placeholder="e.g. Presidential Suite"
-            className="font-main w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary focus:bg-card"
+            className="font-main h-[50px] w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition-[border-color,background-color,box-shadow] duration-150 focus:border-primary focus:bg-card"
           />
         </label>
 
@@ -161,17 +158,18 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
           <span className="font-main text-sm font-semibold text-foreground">Room Number</span>
           <input
             type="number"
-            value={formData.roomNumber || ""}
+            min="1"
+            value={draft.roomNumber || ""}
             onChange={(e) => handleNumberChange("roomNumber", e.target.value)}
             onFocus={(e) => e.target.select()}
-            className="font-main w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary focus:bg-card"
+            className="font-main h-[50px] w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition-[border-color,background-color,box-shadow] duration-150 focus:border-primary focus:bg-card"
           />
         </label>
 
         <label className="space-y-2">
           <span className="font-main text-sm font-semibold text-foreground">Room Type</span>
           <Select
-            value={formData.roomType}
+            value={draft.roomType}
             onValueChange={(value) => handleChange("roomType", value as RoomType)}
           >
             <SelectTrigger className="h-[50px] rounded-2xl bg-muted/35">
@@ -189,10 +187,11 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
           <span className="font-main text-sm font-semibold text-foreground">Floor</span>
           <input
             type="number"
-            value={formData.floor || ""}
+            min="0"
+            value={draft.floor || ""}
             onChange={(e) => handleNumberChange("floor", e.target.value)}
             onFocus={(e) => e.target.select()}
-            className="font-main w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary focus:bg-card"
+            className="font-main h-[50px] w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition-[border-color,background-color,box-shadow] duration-150 focus:border-primary focus:bg-card"
           />
         </label>
 
@@ -200,10 +199,11 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
           <span className="font-main text-sm font-semibold text-foreground">Base Price</span>
           <input
             type="number"
-            value={formData.price || ""}
+            min="0"
+            value={draft.price || ""}
             onChange={(e) => handleNumberChange("price", e.target.value)}
             onFocus={(e) => e.target.select()}
-            className="font-main w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary focus:bg-card"
+            className="font-main h-[50px] w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition-[border-color,background-color,box-shadow] duration-150 focus:border-primary focus:bg-card"
           />
         </label>
 
@@ -213,10 +213,10 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
             type="number"
             min="0"
             max="100"
-            value={formData.discount === 0 ? "0" : formData.discount || ""}
+            value={draft.discount === 0 ? "0" : draft.discount || ""}
             onChange={(e) => handleNumberChange("discount", e.target.value)}
             onFocus={(e) => e.target.select()}
-            className="font-main w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary focus:bg-card"
+            className="font-main h-[50px] w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition-[border-color,background-color,box-shadow] duration-150 focus:border-primary focus:bg-card"
           />
         </label>
 
@@ -225,10 +225,10 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
            <input
             type="number"
             min="1"
-            value={formData.capacity || ""}
+            value={draft.capacity || ""}
             onChange={(e) => handleNumberChange("capacity", e.target.value)}
             onFocus={(e) => e.target.select()}
-            className="font-main w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary focus:bg-card"
+            className="font-main h-[50px] w-full rounded-2xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition-[border-color,background-color,box-shadow] duration-150 focus:border-primary focus:bg-card"
           />
         </label>
 
@@ -236,34 +236,34 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
           <span className="font-main text-sm font-semibold text-foreground">Visibility</span>
           <button
             type="button"
-            onClick={() => handleChange("isAvailable", !formData.isAvailable)}
+            onClick={() => handleChange("isAvailable", !draft.isAvailable)}
             className={`flex w-full cursor-pointer items-center justify-between rounded-2xl border px-4 py-3 text-sm transition ${
-              formData.isAvailable
+              draft.isAvailable
                 ? "border-primary/30 bg-primary/10 text-primary"
                 : "border-border bg-card text-muted-foreground"
             }`}
           >
             <span className="font-main font-semibold">
-              {formData.isAvailable ? "Available" : "Hidden"}
+              {draft.isAvailable ? "Available" : "Hidden"}
             </span>
           </button>
         </div>
 
         <div className="space-y-3 md:col-span-2">
-          <span className="font-main text-sm font-semibold text-foreground">Facilities</span>
+          <span className="font-main text-sm font-semibold text-foreground">Room Amenities</span>
           <div className="flex flex-wrap gap-2">
-            {allFacilities.map((f) => (
+            {allAmenities.map((amenity) => (
               <button
-                key={f._id}
+                key={amenity._id}
                 type="button"
-                onClick={() => handleFacilityToggle(f._id)}
+                onClick={() => handleAmenityToggle(amenity._id)}
                 className={`font-main rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                  formData.facilities?.includes(f._id)
+                  draft.amenities?.includes(amenity._id)
                     ? "border-primary bg-primary text-white shadow-lg shadow-primary/20"
                     : "border-border bg-muted/35 text-muted-foreground hover:bg-muted"
                 }`}
               >
-                {f.name}
+                {amenity.name}
               </button>
             ))}
           </div>
@@ -272,10 +272,10 @@ export default function RoomForm({ draft, onChange }: RoomFormProps) {
         <label className="space-y-2 md:col-span-2">
           <span className="font-main text-sm font-semibold text-foreground">Description</span>
           <textarea
-            value={formData.description}
+            value={draft.description}
             onChange={(e) => handleChange("description", e.target.value)}
             rows={4}
-            className="font-main w-full rounded-3xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary focus:bg-card"
+            className="font-main w-full rounded-3xl border border-border bg-muted/35 px-4 py-3 text-sm text-foreground outline-none transition-[border-color,background-color,box-shadow] duration-150 focus:border-primary focus:bg-card"
           />
         </label>
       </div>

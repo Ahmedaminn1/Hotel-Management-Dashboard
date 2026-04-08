@@ -1,13 +1,20 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "react-toastify";
+import DashboardSectionCard from "@/components/shared/layouts/DashboardSectionCard";
 import DynamicTable from "@/components/shared/table/DynamicTable";
 import SharedModal from "@/components/shared/modal/SharedModal";
 import { activityBookingColumns, activityBookingFilters } from "@/config/tablePresets/activityBookingColumns";
-import { fetchActivityBookings, updateActivityBooking } from "@/lib/activityBookings";
+import { fetchActivityBookings, fetchActivityBookingsPage, updateActivityBooking } from "@/lib/activityBookings";
+import { useServerTableData } from "@/hooks/useServerTableData";
+import { useDashboardAlerts } from "@/components/shared/alerts/dashboard-alerts-context";
+import { queryKeys } from "@/lib/queryKeys";
+import { buildActivityBookingAlerts } from "./ActivityBookingsAlerts";
 import ActivityBookingDetailsView from "./ActivityBookingDetailsView";
 import ActivityBookingEditForm from "./ActivityBookingEditForm";
+import ActivityBookingsOverview from "./ActivityBookingsOverview";
 import { type ActivityBooking, type ActivityBookingDraft } from "./data";
 
 function mapBookingToDraft(booking: ActivityBooking): ActivityBookingDraft {
@@ -20,28 +27,41 @@ function mapBookingToDraft(booking: ActivityBooking): ActivityBookingDraft {
 }
 
 function ActivityBookingsTableClient() {
-  const [bookings, setBookings] = useState<ActivityBooking[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const {
+    setTableQuery,
+    pageItems: bookings,
+    overviewItems: allBookings,
+    totalEntries: totalBookings,
+    isLoading,
+  } = useServerTableData<ActivityBooking>({
+    queryKeyBase: queryKeys.activityBookings.all,
+    initialPageSize: 6,
+    fetchPage: (query) =>
+      fetchActivityBookingsPage({
+        page: query.page,
+        limit: query.pageSize,
+        search: query.search || undefined,
+        status: typeof query.filters.status === "string" ? query.filters.status : undefined,
+        paymentStatus:
+          typeof query.filters.paymentStatus === "string"
+            ? query.filters.paymentStatus
+            : undefined,
+        sort:
+          query.sort?.key === "createdAt"
+            ? query.sort.direction === "asc"
+              ? "oldest"
+              : "newest"
+            : "newest",
+      }),
+    fetchOverview: fetchActivityBookings,
+    staleTime: 0,
+    gcTime: 120_000,
+  });
   const [viewingBookingId, setViewingBookingId] = useState<string | null>(null);
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<ActivityBookingDraft | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-
-  const loadBookings = async () => {
-    try {
-      setIsLoading(true);
-      const data = await fetchActivityBookings();
-      setBookings(data);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load activity bookings");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadBookings();
-  }, []);
 
   const viewingBooking = useMemo(
     () => bookings.find((booking) => booking.id === viewingBookingId) ?? null,
@@ -52,6 +72,54 @@ function ActivityBookingsTableClient() {
     () => bookings.find((booking) => booking.id === editingBookingId) ?? null,
     [bookings, editingBookingId]
   );
+
+  const bookingOverview = useMemo(() => {
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const isToday = (value?: string) => Boolean(value) && value?.slice(0, 10) === todayKey;
+
+    const sessionsToday = allBookings.filter((booking) => isToday(booking.bookingDate)).length;
+    const pendingBookings = allBookings.filter((booking) => booking.status === "pending").length;
+    const unpaidBookings = allBookings.filter((booking) => booking.paymentStatus === "unpaid").length;
+    const confirmedGuests = allBookings
+      .filter((booking) => booking.status === "confirmed")
+      .reduce((sum, booking) => sum + booking.guests, 0);
+    const cancelledBookings = allBookings.filter((booking) =>
+      ["cancelled", "rejected"].includes(booking.status)
+    ).length;
+    const highAttendanceBookings = allBookings.filter((booking) => booking.guests >= 4).length;
+    const projectedRevenue = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 0,
+    }).format(allBookings.reduce((sum, booking) => sum + booking.totalPrice, 0));
+
+    return {
+      sessionsToday,
+      pendingBookings,
+      unpaidBookings,
+      confirmedGuests,
+      cancelledBookings,
+      highAttendanceBookings,
+      projectedRevenue,
+    };
+  }, [allBookings]);
+
+  const pageAlerts = useMemo(
+    () => ({
+      title: "Activity notifications",
+      description: "Quick attention items for the recreation and guest-experience teams.",
+      alerts: buildActivityBookingAlerts({
+        sessionsToday: bookingOverview.sessionsToday,
+        pendingBookings: bookingOverview.pendingBookings,
+        unpaidBookings: bookingOverview.unpaidBookings,
+        highAttendanceBookings: bookingOverview.highAttendanceBookings,
+        cancelledBookings: bookingOverview.cancelledBookings,
+      }),
+    }),
+    [bookingOverview]
+  );
+
+  useDashboardAlerts(pageAlerts);
 
   const actions = [
     {
@@ -79,12 +147,8 @@ function ActivityBookingsTableClient() {
     void (async () => {
       setIsSaving(true);
       try {
-        const updatedBooking = await updateActivityBooking(editingDraft);
-        setBookings((current) =>
-          current.map((booking) =>
-            booking.id === updatedBooking.id ? updatedBooking : booking
-          )
-        );
+        await updateActivityBooking(editingDraft);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activityBookings.all });
         toast.success("Activity booking updated successfully.");
         handleCloseEditModal();
       } catch (error) {
@@ -97,15 +161,32 @@ function ActivityBookingsTableClient() {
 
   return (
     <>
-      <DynamicTable<ActivityBooking>
-        columns={activityBookingColumns}
-        data={bookings}
-        isLoading={isLoading}
-        filtersConfig={activityBookingFilters}
-        pageSize={6}
-        searchPlaceholder="Search activity bookings..."
-        actions={actions}
-      />
+      <div className="space-y-6">
+        <ActivityBookingsOverview
+          sessionsToday={bookingOverview.sessionsToday}
+          pendingBookings={bookingOverview.pendingBookings}
+          unpaidBookings={bookingOverview.unpaidBookings}
+          confirmedGuests={bookingOverview.confirmedGuests}
+          cancelledBookings={bookingOverview.cancelledBookings}
+          projectedRevenue={bookingOverview.projectedRevenue}
+          isLoading={isLoading}
+        />
+
+        <DashboardSectionCard>
+          <DynamicTable<ActivityBooking>
+            columns={activityBookingColumns}
+            data={bookings}
+            isLoading={isLoading}
+            filtersConfig={activityBookingFilters}
+            pageSize={6}
+            mode="server"
+            totalEntries={totalBookings}
+            onQueryChange={setTableQuery}
+            searchPlaceholder="Search activity bookings..."
+            actions={actions}
+          />
+        </DashboardSectionCard>
+      </div>
 
       <SharedModal
         isOpen={Boolean(viewingBooking)}

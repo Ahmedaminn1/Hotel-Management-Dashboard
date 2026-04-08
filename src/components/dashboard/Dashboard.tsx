@@ -1,85 +1,112 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Bed, Users, Building2, Calendar, ArrowRight, Utensils } from "lucide-react";
-import StatCard from "./StatCard";
-import DashboardCharts from "./DashboardCharts";
-import { getDashboardData } from "@/services/dashboard.service";
+import { ArrowRight, Bed, Building2, Calendar, ClipboardList, CreditCard, Users, type LucideIcon } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 
-const ICON_MAP: Record<string, any> = {
+import { useDashboardAlerts } from "@/components/shared/alerts/dashboard-alerts-context";
+import DashboardPageShell from "@/components/shared/layouts/DashboardPageShell";
+import DashboardHero from "./DashboardHero";
+import DashboardListPanel from "./DashboardListPanel";
+import DashboardOperationsSection from "./DashboardOperationsSection";
+import StatCard from "./StatCard";
+import type { DashboardData } from "./types";
+import { Button } from "@/components/ui/button";
+import { getDashboardData } from "@/services/dashboard.service";
+import { DashboardHomeBelowHeroSkeleton } from "@/components/shared/loading/DashboardSkeleton";
+import { queryKeys } from "@/lib/queryKeys";
+
+const DashboardCharts = dynamic(() => import("./DashboardCharts"), {
+  ssr: false,
+  loading: () => (
+    <div
+      className="grid min-h-[280px] gap-3 md:grid-cols-2 xl:grid-cols-3"
+      aria-hidden
+    >
+      <div className="h-[220px] animate-pulse rounded-[22px] bg-muted/40 md:col-span-1" />
+      <div className="h-[220px] animate-pulse rounded-[22px] bg-muted/40 md:col-span-1" />
+      <div className="h-[220px] animate-pulse rounded-[22px] bg-muted/40 md:col-span-2 xl:col-span-1" />
+    </div>
+  ),
+});
+
+const ICON_MAP: Record<string, LucideIcon> = {
   Bed,
   Users,
   Building2,
   Calendar,
-  Utensils,
+  CreditCard,
+  ClipboardList,
 };
 
 export default function Dashboard() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data,
+    isLoading: loading,
+    isError,
+    error,
+  } = useQuery<DashboardData>({
+    queryKey: queryKeys.dashboardHome.stats,
+    queryFn: getDashboardData,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: 10_000,
+  });
 
-  useEffect(() => {
-    let isMounted = true;
+  const errorMessage = isError
+    ? error instanceof Error
+      ? error.message
+      : "Failed to load dashboard data. Please try again later."
+    : null;
 
-    getDashboardData()
-      .then((res) => {
-        if (isMounted) {
-          setData(res);
-          setLoading(false);
+  useDashboardAlerts(
+    data
+      ? {
+          title: "Notifications & attention",
+          description: "Small issues here turn into missed revenue or guest friction later.",
+          alerts: data.alerts,
         }
-      })
-      .catch((err) => {
-        if (isMounted) {
-          console.error("Dashboard failed to load:", err);
-          setError("Failed to load dashboard data. Please try again later.");
-          setLoading(false);
-        }
-      });
-
-    return () => { isMounted = false; };
-  }, []);
+      : null
+  );
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-        <p className="text-muted-foreground animate-pulse">Syncing with database...</p>
-      </div>
+      <DashboardPageShell className="space-y-4 md:space-y-5">
+        <DashboardHero />
+        <DashboardHomeBelowHeroSkeleton />
+      </DashboardPageShell>
     );
   }
 
-  if (error || !data) {
+  if (errorMessage || !data) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] text-center p-6">
-        <div className="bg-destructive/10 p-4 rounded-full mb-4">
-          <Building2 className="h-8 w-8 text-destructive" />
+      <DashboardPageShell className="space-y-4 md:space-y-5">
+        <DashboardHero />
+        <div className="flex min-h-[320px] flex-col items-center justify-center rounded-[22px] border border-border bg-card p-6 text-center">
+          <div className="mb-4 rounded-full bg-destructive/10 p-4">
+            <Building2 className="h-8 w-8 text-destructive" />
+          </div>
+          <h3 className="mb-2 font-header text-xl font-semibold">Something went wrong</h3>
+          <p className="mb-6 max-w-md font-main text-muted-foreground">
+            {errorMessage || "No data available."}
+          </p>
+          <Button variant="palmPrimary" onClick={() => window.location.reload()}>
+            Try Refreshing
+          </Button>
         </div>
-        <h3 className="text-xl font-semibold mb-2">Something went wrong</h3>
-        <p className="text-muted-foreground max-w-md mb-6">{error || "No data available."}</p>
-        <button 
-          onClick={() => window.location.reload()}
-          className="px-4 py-2 bg-primary text-primary-foreground rounded-md transition-transform active:scale-95"
-        >
-          Try Refreshing
-        </button>
-      </div>
+      </DashboardPageShell>
     );
   }
 
   return (
-    <div className="p-6 space-y-8 animate-in fade-in duration-700">
-      <header className="flex flex-col gap-2">
-        <h2 className="text-3xl font-bold tracking-tight">System Overview</h2>
-        <p className="text-muted-foreground">
-          Welcome back! Your complete hotel management metrics are now live.
-        </p>
-      </header>
+    <DashboardPageShell className="space-y-4 md:space-y-5">
+      <DashboardHero />
 
-      {/* Stats Grid - 6 Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6">
-        {data.stats.map((stat: any, index: number) => (
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {data.stats.map((stat, index: number) => (
           <StatCard
             key={index}
             title={stat.title}
@@ -92,29 +119,57 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Charts Section */}
       <DashboardCharts
         occupancyData={data.charts.occupancy}
-        userData={data.charts.userRoles}
+        bookingStatusData={data.charts.bookingStatus}
         trendData={data.charts.trends}
       />
-      
-      {/* Additional Quick Actions or Info could go here */}
-      <div className="bg-primary/5 rounded-xl p-8 border border-primary/20 flex flex-col md:flex-row items-center justify-between gap-6">
-        <div className="space-y-2 text-center md:text-left">
-          <h3 className="text-xl font-semibold text-primary">Need more detailed reports?</h3>
-          <p className="text-muted-foreground max-w-md">
-            Check the specific management sections in the sidebar for complete data access and advanced filtering.
+
+      <DashboardOperationsSection
+        operations={data.operations}
+        highlights={{
+          users: data.highlights.users,
+          facilities: data.highlights.facilities,
+          activities: data.highlights.activities,
+        }}
+      />
+
+      <section className="grid gap-3 xl:grid-cols-2">
+        <DashboardListPanel
+          variant="bookings"
+          title="Latest Room Bookings"
+          description="Recent guest activity coming into the property."
+          ctaLabel="Open bookings"
+          ctaHref="/dashboard/rooms/bookings"
+          emptyText="No room bookings available yet."
+          items={data.recentRoomBookings}
+        />
+        <DashboardListPanel
+          variant="activities"
+          title="Today's Activity Board"
+          description="Upcoming sessions and how close they are to full capacity."
+          ctaLabel="View schedules"
+          ctaHref="/dashboard/activities/schedules"
+          emptyText="No activity sessions scheduled for today."
+          items={data.upcomingActivities}
+        />
+      </section>
+
+      <div className="flex flex-col items-center justify-between gap-3 rounded-[22px] border border-primary/20 bg-primary/5 p-4 md:flex-row md:p-5">
+        <div className="space-y-1 text-center md:text-left">
+          <h3 className="font-header text-base font-semibold text-primary md:text-lg">Dive into operations</h3>
+          <p className="max-w-xl font-main text-xs text-muted-foreground md:text-sm">
+            From here, the next strongest upgrade is turning each management page into a summary
+            view plus a table, not just a table alone.
           </p>
         </div>
-        <Link 
-          href="/dashboard/rooms"
-          className="flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground rounded-lg font-medium shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 group text-center"
-        >
-          View Detailed Analytics
-          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-        </Link>
+        <Button asChild variant="palmPrimary">
+          <Link href="/dashboard/rooms/bookings">
+            Open Room Operations
+            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+          </Link>
+        </Button>
       </div>
-    </div>
+    </DashboardPageShell>
   );
 }

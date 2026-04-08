@@ -12,7 +12,14 @@ type AuthorizedUser = {
   token: string;
 };
 
-const API_BASE_URL = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000";
+const getBaseUrl = () => {
+  const url = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (url) return url.trim().replace(/\/$/, "");
+  if (process.env.NODE_ENV === "development") return "http://localhost:5000";
+  throw new Error("API Base URL is not configured (API_BASE_URL or NEXT_PUBLIC_API_BASE_URL required)");
+};
+
+const API_BASE_URL = getBaseUrl();
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -32,7 +39,9 @@ export const authOptions: NextAuthOptions = {
         },
       },
       authorize: async (credentials) => {
-        const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        const loginUrl = `${API_BASE_URL}/auth/login`;
+
+        const response = await fetch(loginUrl, {
           method: "POST",
           body: JSON.stringify({
             email: credentials?.email,
@@ -42,8 +51,25 @@ export const authOptions: NextAuthOptions = {
             "Content-Type": "application/json",
           },
         });
+
+        // Safe logging of response status
+        if (!response.ok) {
+          const rawText = await response.clone().text();
+          const textExcerpt = rawText.slice(0, 200);
+          let backendMessage = "";
+          try {
+            const parsed = JSON.parse(rawText);
+            backendMessage = parsed?.message || "";
+          } catch {
+            backendMessage = "";
+          }
+          console.error(
+            `[NextAuth] Login failed with status: ${response.status}. URL: ${loginUrl}. Snippet: ${textExcerpt}`
+          );
+          throw new Error(backendMessage || `Auth Error: ${response.status}`);
+        }
+
         const data = await response.json();
-        console.log("NextAuth Authorize Response:", data);
 
         if (data.message === "Done") {
           // Broad search for the token: data.token, data.accessToken, or nested in data.data
@@ -99,8 +125,12 @@ export const authOptions: NextAuthOptions = {
 
     async session({ session, token }) {
       if (token) {
-        session.user = token.user;
+        session.user = {
+          ...session.user,
+          ...(token.user ?? {}),
+        };
         session.accessToken = token.accessToken as string | undefined;
+        session.userId = typeof token.id === "string" ? token.id : undefined;
       }
       return session;
     },

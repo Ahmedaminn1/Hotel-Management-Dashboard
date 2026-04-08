@@ -30,33 +30,40 @@ export default function StatCard({
   const selectedColor = colorMap[color] || colorMap.primary;
 
   return (
-    <div className={`relative overflow-hidden rounded-xl border bg-gradient-to-br p-6 transition-all hover:shadow-lg hover:-translate-y-1 ${selectedColor}`}>
-      <div className="flex items-center justify-between">
+    <div
+      className={`relative overflow-hidden rounded-xl border bg-gradient-to-br p-3 transition-all hover:-translate-y-1 hover:shadow-lg md:p-3.5 ${selectedColor}`}
+    >
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-main text-[11px] font-medium text-muted-foreground opacity-80 md:text-xs">
+            {title}
+          </p>
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background/50 shadow-sm ring-1 ring-border backdrop-blur-sm md:h-8 md:w-8">
+            <Icon className="h-3.5 w-3.5 md:h-4 md:w-4" />
+          </div>
+        </div>
+
         <div>
-          <p className="text-sm font-medium text-muted-foreground opacity-80">{title}</p>
-          <h3 className="mt-1 text-3xl font-bold tracking-tight">{value}</h3>
-          
-          {trend && (
-            <div className="mt-2 flex items-center gap-1">
-              <span className={`text-xs font-semibold ${trend.isUp ? "text-emerald-500" : "text-rose-500"}`}>
+          <h3 className="font-header mt-0.5 text-xl font-bold tracking-tight md:text-2xl">{value}</h3>
+
+          {trend ? (
+            <div className="mt-1 flex items-center gap-1">
+              <span
+                className={`font-main text-[11px] font-semibold ${trend.isUp ? "text-emerald-500" : "text-rose-500"}`}
+              >
                 {trend.isUp ? "↑" : "↓"} {trend.value}
               </span>
-              <span className="text-xs text-muted-foreground">vs last month</span>
+              <span className="font-main text-[11px] text-muted-foreground">vs last month</span>
             </div>
-          )}
-          
-          {description && !trend && (
-            <p className="mt-2 text-xs text-muted-foreground">{description}</p>
-          )}
-        </div>
-        
-        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-background/50 backdrop-blur-sm shadow-sm ring-1 ring-border">
-          <Icon className="h-6 w-6" />
+          ) : null}
+
+          {description && !trend ? (
+            <p className="font-main mt-1 text-[11px] text-muted-foreground md:text-xs">{description}</p>
+          ) : null}
         </div>
       </div>
-      
-      {/* Decorative background element */}
-      <div className="absolute -right-4 -bottom-4 h-24 w-24 rounded-full bg-current opacity-5 blur-2xl" />
+
+      <div className="absolute -bottom-4 -right-4 h-16 w-16 rounded-full bg-current opacity-5 blur-2xl" />
     </div>
   );
 }

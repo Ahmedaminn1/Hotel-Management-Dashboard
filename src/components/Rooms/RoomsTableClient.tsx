@@ -1,69 +1,85 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import React, { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { BadgePercent, BedDouble, CircleDollarSign, DoorOpen } from "lucide-react";
 import { toast } from "react-toastify";
+import DashboardSectionCard from "@/components/shared/layouts/DashboardSectionCard";
 import DynamicTable from "@/components/shared/table/DynamicTable";
+import TableOverview from "@/components/shared/table/TableOverview";
 import SharedModal from "@/components/shared/modal/SharedModal";
 import { roomColumns, roomFilters } from "@/config/tablePresets/roomColumns";
-import { fetchRooms, createRoom, updateRoom, deleteRoom } from "@/lib/rooms";
+import { fetchRooms, fetchRoomsPage, createRoom, updateRoom, deleteRoom } from "@/lib/rooms";
+import { useServerTableData } from "@/hooks/useServerTableData";
+import { DASHBOARD_MODAL_EVENTS } from "@/lib/modal-events";
+import { queryKeys } from "@/lib/queryKeys";
 import { createEmptyRoomDraft, type Room, type RoomDraft } from "./data";
 import RoomAddForm from "./RoomAddForm";
 import RoomEditForm from "./RoomEditForm";
 import RoomDetailsView from "./RoomDetailsView";
 import RoomDeleteConfirm from "./RoomDeleteConfirm";
 
-interface RoomsTableClientProps {
-  initialOpenAddModal?: boolean;
-}
+function RoomsTableClient() {
+  const queryClient = useQueryClient();
+  const {
+    setTableQuery,
+    pageItems: rooms,
+    overviewItems: allRooms,
+    totalEntries: totalRoomsCount,
+    isLoading,
+  } = useServerTableData<Room>({
+    queryKeyBase: queryKeys.rooms.all,
+    initialPageSize: 5,
+    fetchPage: (query) =>
+      fetchRoomsPage({
+        page: query.page,
+        limit: query.pageSize,
+        search: query.search || undefined,
+        sort:
+          query.sort?.key === "price"
+            ? query.sort.direction === "asc"
+              ? "price_asc"
+              : "price_desc"
+            : query.sort?.key === "roomName"
+              ? query.sort.direction === "asc"
+                ? "roomName_asc"
+                : "roomName_desc"
+              : query.sort?.key === "createdAt"
+                ? query.sort.direction === "asc"
+                  ? "oldest"
+                  : "newest"
+                : "newest",
+        roomType:
+          typeof query.filters.roomType === "string"
+            ? query.filters.roomType
+            : undefined,
+        isAvailable:
+          typeof query.filters.isAvailable === "string"
+            ? query.filters.isAvailable
+            : undefined,
+      }),
+    fetchOverview: fetchRooms,
+    staleTime: 45_000,
+  });
 
-function RoomsTableClient({ initialOpenAddModal = false }: RoomsTableClientProps) {
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [creatingDraft, setCreatingDraft] = useState<RoomDraft | null>(null);
   const [viewingRoomId, setViewingRoomId] = useState<string | null>(null);
   const [editingRoomId, setEditingRoomId] = useState<string | null>(null);
   const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<RoomDraft | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  
-  const hasOpenedInitialModal = useRef(false);
-  const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const loadRooms = async () => {
-    try {
-      setIsLoading(true);
-      const data = await fetchRooms();
-      setRooms(data);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load rooms");
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   useEffect(() => {
-    void loadRooms();
+    const openAddModal = () => {
+      setCreatingDraft((current) => current ?? createEmptyRoomDraft());
+    };
+
+    window.addEventListener(DASHBOARD_MODAL_EVENTS.roomsAdd, openAddModal);
+
+    return () => {
+      window.removeEventListener(DASHBOARD_MODAL_EVENTS.roomsAdd, openAddModal);
+    };
   }, []);
-
-  useEffect(() => {
-    if (!initialOpenAddModal || hasOpenedInitialModal.current) return;
-    hasOpenedInitialModal.current = true;
-    setCreatingDraft(createEmptyRoomDraft());
-  }, [initialOpenAddModal]);
-
-  const syncAddModalQueryParam = (isOpen: boolean) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (isOpen) {
-      params.set("modal", "add");
-    } else if (params.get("modal") === "add") {
-      params.delete("modal");
-    }
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  };
 
   const viewingRoom = useMemo(
     () => rooms.find((r) => r.id === viewingRoomId) ?? null,
@@ -80,10 +96,50 @@ function RoomsTableClient({ initialOpenAddModal = false }: RoomsTableClientProps
     [rooms, deletingRoomId]
   );
 
+  const overviewItems = useMemo(() => {
+    const totalRooms = totalRoomsCount;
+    const availableRooms = allRooms.filter((room) => room.isAvailable).length;
+    const offerRooms = allRooms.filter((room) => room.hasOffer).length;
+    const averageRate = allRooms.length > 0
+      ? Math.round(allRooms.reduce((sum, room) => sum + (room.finalPrice ?? room.price), 0) / allRooms.length)
+      : 0;
+
+    return [
+      {
+        key: "rooms",
+        label: "Rooms listed",
+        value: totalRooms,
+        helper: "Inventory currently visible in this table",
+        icon: BedDouble,
+      },
+      {
+        key: "available",
+        label: "Available now",
+        value: availableRooms,
+        helper: "Rooms ready for the next reservation",
+        icon: DoorOpen,
+      },
+      {
+        key: "offers",
+        label: "Offers running",
+        value: offerRooms,
+        helper: "Rooms currently showing promotional pricing",
+        icon: BadgePercent,
+        tone: "secondary" as const,
+      },
+      {
+        key: "rate",
+        label: "Average nightly rate",
+        value: `$${averageRate.toLocaleString()}`,
+        helper: "Average visible sell price across rooms",
+        icon: CircleDollarSign,
+      },
+    ];
+  }, [allRooms, totalRoomsCount]);
+
   const handleCloseViewModal = () => setViewingRoomId(null);
   const handleCloseAddModal = () => {
     setCreatingDraft(null);
-    syncAddModalQueryParam(false);
   };
   const handleCloseEditModal = () => {
     setEditingRoomId(null);
@@ -96,7 +152,7 @@ function RoomsTableClient({ initialOpenAddModal = false }: RoomsTableClientProps
     setIsSaving(true);
     try {
       await deleteRoom(deletingRoom.id);
-      setRooms((current) => current.filter((r) => r.id !== deletingRoom.id));
+      await queryClient.invalidateQueries({ queryKey: queryKeys.rooms.all });
       toast.success("Room deleted successfully.");
       handleCloseDeleteModal();
     } catch (error) {
@@ -110,8 +166,8 @@ function RoomsTableClient({ initialOpenAddModal = false }: RoomsTableClientProps
     if (!creatingDraft) return;
     setIsSaving(true);
     try {
-      const refreshedRooms = await createRoom(creatingDraft);
-      setRooms(refreshedRooms);
+      await createRoom(creatingDraft);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.rooms.all });
       toast.success("Room created successfully.");
       handleCloseAddModal();
     } catch (error) {
@@ -125,8 +181,8 @@ function RoomsTableClient({ initialOpenAddModal = false }: RoomsTableClientProps
     if (!editingRoomId || !editingDraft) return;
     setIsSaving(true);
     try {
-      const refreshedRooms = await updateRoom(editingRoomId, editingDraft);
-      setRooms(refreshedRooms);
+      await updateRoom(editingRoomId, editingDraft);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.rooms.all });
       toast.success("Room updated successfully.");
       handleCloseEditModal();
     } catch (error) {
@@ -144,9 +200,25 @@ function RoomsTableClient({ initialOpenAddModal = false }: RoomsTableClientProps
     {
       key: "edit" as const,
       onClick: (room: Room) => {
-        const { id, createdAt, reviewsCount, viewsCount, rating, finalPrice, image, ...rest } = room;
-        setEditingDraft({ ...rest });
-        setEditingRoomId(id);
+        setEditingDraft({
+          roomName: room.roomName,
+          roomNumber: room.roomNumber,
+          roomType: room.roomType,
+          price: room.price,
+          capacity: room.capacity,
+          discount: room.discount,
+          description: room.description,
+          amenities: room.amenities,
+          roomImages: room.roomImages,
+          hasOffer: room.hasOffer,
+          isAvailable: room.isAvailable,
+          floor: room.floor,
+          checkInTime: room.checkInTime,
+          checkOutTime: room.checkOutTime,
+          cancellationPolicy: room.cancellationPolicy,
+          deletedImageIds: [],
+        });
+        setEditingRoomId(room.id);
       },
     },
     {
@@ -158,15 +230,24 @@ function RoomsTableClient({ initialOpenAddModal = false }: RoomsTableClientProps
 
   return (
     <>
-      <DynamicTable<Room>
-        columns={roomColumns}
-        data={rooms}
-        isLoading={isLoading}
-        filtersConfig={roomFilters}
-        pageSize={5}
-        searchPlaceholder="Search rooms..."
-        actions={actions}
-      />
+      <div className="mb-5 md:mb-6">
+        <TableOverview items={overviewItems} isLoading={isLoading} />
+      </div>
+
+      <DashboardSectionCard>
+        <DynamicTable<Room>
+          columns={roomColumns}
+          data={rooms}
+          isLoading={isLoading}
+          filtersConfig={roomFilters}
+          pageSize={5}
+          mode="server"
+          totalEntries={totalRoomsCount}
+          onQueryChange={setTableQuery}
+          searchPlaceholder="Search rooms..."
+          actions={actions}
+        />
+      </DashboardSectionCard>
 
       <SharedModal
         isOpen={Boolean(creatingDraft)}

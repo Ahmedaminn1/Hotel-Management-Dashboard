@@ -1,81 +1,68 @@
 "use client";
 
 import Image from "next/image";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import React, { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { BadgeCheck, ShieldCheck, Users, UserRoundCheck } from "lucide-react";
 import { toast } from "react-toastify";
+import DashboardSectionCard from "@/components/shared/layouts/DashboardSectionCard";
 import DynamicTable from "@/components/shared/table/DynamicTable";
+import TableOverview from "@/components/shared/table/TableOverview";
 import SharedModal from "@/components/shared/modal/SharedModal";
 import { userColumns, userFilters } from "@/config/tablePresets/userColumns";
-import { createUser, deleteUser, fetchUsers, updateUser } from "@/lib/users";
+import { createUser, deleteUser, fetchUsers, fetchUsersPage, updateUser } from "@/lib/users";
+import { useServerTableData } from "@/hooks/useServerTableData";
+import { DASHBOARD_MODAL_EVENTS } from "@/lib/modal-events";
+import { queryKeys } from "@/lib/queryKeys";
 import { createEmptyUserDraft, type User } from "./data";
 import UserForm from "./UserForm";
 
-interface UserDashboardTableClientProps {
-  initialOpenAddModal?: boolean;
-}
-
-function UserDashboardTableClient({ initialOpenAddModal = false }: UserDashboardTableClientProps) {
-  const [users, setUsers] = React.useState<User[]>([]);
-  const [isLoading, setIsLoading] = React.useState(true);
+function UserDashboardTableClient() {
+  const queryClient = useQueryClient();
+  const {
+    setTableQuery,
+    pageItems: users,
+    overviewItems: allUsers,
+    totalEntries: totalUsersCount,
+    isLoading,
+  } = useServerTableData<User>({
+    queryKeyBase: queryKeys.users.all,
+    initialPageSize: 8,
+    fetchPage: (query) =>
+      fetchUsersPage({
+        page: query.page,
+        limit: query.pageSize,
+        search: query.search || undefined,
+        role: typeof query.filters.role === "string" ? query.filters.role : undefined,
+        gender: typeof query.filters.gender === "string" ? query.filters.gender : undefined,
+        sort:
+          query.sort?.key === "userName"
+            ? query.sort.direction === "asc"
+              ? "userName_asc"
+              : "userName_desc"
+            : "newest",
+      }),
+    fetchOverview: fetchUsers,
+    staleTime: 45_000,
+  });
   const [creatingDraft, setCreatingDraft] = useState<User | null>(null);
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<User | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const hasOpenedInitialModal = useRef(false);
-  const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadUsers = async () => {
-      try {
-        setIsLoading(true);
-        const data = await fetchUsers();
-        if (isMounted) {
-          setUsers(data);
-        }
-      } catch (error) {
-        if (isMounted) {
-          toast.error(error instanceof Error ? error.message : "Failed to load users");
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
+    const openAddModal = () => {
+      setCreatingDraft((current) => current ?? createEmptyUserDraft());
     };
 
-    loadUsers();
+    window.addEventListener(DASHBOARD_MODAL_EVENTS.usersAdd, openAddModal);
 
     return () => {
-      isMounted = false;
+      window.removeEventListener(DASHBOARD_MODAL_EVENTS.usersAdd, openAddModal);
     };
   }, []);
-
-  useEffect(() => {
-    if (!initialOpenAddModal || hasOpenedInitialModal.current) return;
-
-    hasOpenedInitialModal.current = true;
-    setCreatingDraft(createEmptyUserDraft());
-  }, [initialOpenAddModal]);
-
-  const syncAddModalQueryParam = (isOpen: boolean) => {
-    const params = new URLSearchParams(searchParams.toString());
-
-    if (isOpen) {
-      params.set("modal", "add");
-    } else if (params.get("modal") === "add") {
-      params.delete("modal");
-    }
-
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  };
 
   const viewingUser = useMemo(
     () => users.find((user) => user.id === viewingUserId) ?? null,
@@ -92,10 +79,49 @@ function UserDashboardTableClient({ initialOpenAddModal = false }: UserDashboard
     [users, deletingUserId]
   );
 
+  const overviewItems = useMemo(() => {
+    const totalUsers = totalUsersCount;
+    const confirmedUsers = allUsers.filter((user) => user.isConfirmed).length;
+    const adminUsers = allUsers.filter((user) => user.role === "admin").length;
+    const guestUsers = allUsers.filter((user) => user.role === "user").length;
+
+    return [
+      {
+        key: "users",
+        label: "Users listed",
+        value: totalUsers,
+        helper: "All visible team members and guests",
+        icon: Users,
+      },
+      {
+        key: "confirmed",
+        label: "Confirmed accounts",
+        value: confirmedUsers,
+        helper: "Accounts already verified and usable",
+        icon: BadgeCheck,
+      },
+      {
+        key: "admins",
+        label: "Admin access",
+        value: adminUsers,
+        helper: "Users with dashboard management permissions",
+        icon: ShieldCheck,
+        tone: "secondary" as const,
+      },
+      {
+        key: "guests",
+        label: "Standard users",
+        value: guestUsers,
+        helper: "Non-admin accounts in the current list",
+        icon: UserRoundCheck,
+        tone: "secondary" as const,
+      },
+    ];
+  }, [allUsers, totalUsersCount]);
+
   const handleCloseViewModal = () => setViewingUserId(null);
   const handleCloseAddModal = () => {
     setCreatingDraft(null);
-    syncAddModalQueryParam(false);
   };
   const handleCloseEditModal = () => {
     setEditingUserId(null);
@@ -110,9 +136,7 @@ function UserDashboardTableClient({ initialOpenAddModal = false }: UserDashboard
       setIsSaving(true);
       try {
         await deleteUser(deletingUser.id);
-        setUsers((currentUsers) =>
-          currentUsers.filter((user) => user.id !== deletingUser.id)
-        );
+        await queryClient.invalidateQueries({ queryKey: queryKeys.users.all });
         toast.success("User deleted successfully.");
         handleCloseDeleteModal();
       } catch (error) {
@@ -148,12 +172,8 @@ function UserDashboardTableClient({ initialOpenAddModal = false }: UserDashboard
     void (async () => {
       setIsSaving(true);
       try {
-        const updatedUser = await updateUser(editingDraft);
-        setUsers((currentUsers) =>
-          currentUsers.map((user) =>
-            user.id === updatedUser.id ? updatedUser : user
-          )
-        );
+        await updateUser(editingDraft);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.users.all });
         toast.success("User updated successfully.");
         handleCloseEditModal();
       } catch (error) {
@@ -170,8 +190,8 @@ function UserDashboardTableClient({ initialOpenAddModal = false }: UserDashboard
     void (async () => {
       setIsSaving(true);
       try {
-        const refreshedUsers = await createUser(creatingDraft);
-        setUsers(refreshedUsers);
+        await createUser(creatingDraft);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.users.all });
         toast.success("User created successfully.");
         handleCloseAddModal();
       } catch (error) {
@@ -184,15 +204,24 @@ function UserDashboardTableClient({ initialOpenAddModal = false }: UserDashboard
 
   return (
     <>
-      <DynamicTable<User>
-        columns={userColumns}
-        data={users}
-        isLoading={isLoading}
-        filtersConfig={userFilters}
-        pageSize={5}
-        searchPlaceholder="Search users..."
-        actions={actions}
-      />
+      <div className="mb-5 md:mb-6">
+        <TableOverview items={overviewItems} isLoading={isLoading} />
+      </div>
+
+      <DashboardSectionCard>
+        <DynamicTable<User>
+          columns={userColumns}
+          data={users}
+          isLoading={isLoading}
+          filtersConfig={userFilters}
+          pageSize={8}
+          mode="server"
+          totalEntries={totalUsersCount}
+          onQueryChange={setTableQuery}
+          searchPlaceholder="Search users..."
+          actions={actions}
+        />
+      </DashboardSectionCard>
 
       <SharedModal
         isOpen={Boolean(creatingDraft)}
