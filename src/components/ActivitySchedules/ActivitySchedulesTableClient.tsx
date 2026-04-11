@@ -1,18 +1,25 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import React, { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarClock, CircleDollarSign, Clock3, Users } from "lucide-react";
 import { toast } from "react-toastify";
+import DashboardSectionCard from "@/components/shared/layouts/DashboardSectionCard";
 import DynamicTable from "@/components/shared/table/DynamicTable";
+import TableOverview from "@/components/shared/table/TableOverview";
 import SharedModal from "@/components/shared/modal/SharedModal";
 import { activityScheduleColumns, activityScheduleFilters } from "@/config/tablePresets/activityScheduleColumns";
 import { fetchActivities } from "@/lib/activities";
+import { DASHBOARD_MODAL_EVENTS } from "@/lib/modal-events";
+import { queryKeys } from "@/lib/queryKeys";
 import {
   createActivitySchedule,
   deleteActivitySchedule,
   fetchActivitySchedules,
+  fetchActivitySchedulesPage,
   updateActivitySchedule,
 } from "@/lib/activitySchedules";
+import { useServerTableData } from "@/hooks/useServerTableData";
 import ActivityScheduleAddForm from "./ActivityScheduleAddForm";
 import ActivityScheduleDeleteConfirm from "./ActivityScheduleDeleteConfirm";
 import ActivityScheduleDetailsView from "./ActivityScheduleDetailsView";
@@ -52,62 +59,59 @@ function mapScheduleToDraft(schedule: ActivitySchedule): ActivityScheduleDraft {
   };
 }
 
-interface ActivitySchedulesTableClientProps {
-  initialOpenAddModal?: boolean;
-}
-
-function ActivitySchedulesTableClient({
-  initialOpenAddModal = false,
-}: ActivitySchedulesTableClientProps) {
-  const [activities, setActivities] = useState<ActivityOption[]>([]);
-  const [schedules, setSchedules] = useState<ActivitySchedule[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+function ActivitySchedulesTableClient() {
+  const queryClient = useQueryClient();
+  const activitiesQuery = useQuery({
+    queryKey: queryKeys.activities.list,
+    queryFn: fetchActivities,
+    staleTime: 45_000,
+  });
+  const {
+    setTableQuery,
+    pageItems: schedules,
+    overviewItems: allSchedules,
+    totalEntries: totalSchedules,
+    isLoading: schedulesLoading,
+  } = useServerTableData<ActivitySchedule>({
+    queryKeyBase: queryKeys.activitySchedules.all,
+    initialPageSize: 6,
+    fetchPage: (query) =>
+      fetchActivitySchedulesPage({
+        page: query.page,
+        limit: query.pageSize,
+        search: query.search || undefined,
+        status: typeof query.filters.status === "string" ? query.filters.status : undefined,
+        sort: query.sort?.key === "date"
+          ? query.sort.direction === "asc"
+            ? "date_asc"
+            : "date_desc"
+          : query.sort?.key === "createdAt"
+            ? query.sort.direction === "asc"
+              ? "oldest"
+              : "newest"
+            : "newest",
+      }),
+    fetchOverview: fetchActivitySchedules,
+    staleTime: 20_000,
+  });
+  const activities = useMemo(
+    () => (activitiesQuery.data ?? []).map(mapActivityToOption),
+    [activitiesQuery.data]
+  );
+  const isLoading = activitiesQuery.isLoading || schedulesLoading;
   const [creatingDraft, setCreatingDraft] = useState<ActivityScheduleDraft | null>(null);
   const [viewingScheduleId, setViewingScheduleId] = useState<string | null>(null);
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [deletingScheduleId, setDeletingScheduleId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<ActivityScheduleDraft | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const hasOpenedInitialModal = useRef(false);
-  const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const [shouldOpenAddModal, setShouldOpenAddModal] = useState(false);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadData = async () => {
-      try {
-        setIsLoading(true);
-        const [activitiesData, schedulesData] = await Promise.all([
-          fetchActivities(),
-          fetchActivitySchedules(),
-        ]);
-
-        if (!isMounted) return;
-
-        setActivities(activitiesData.map(mapActivityToOption));
-        setSchedules(schedulesData);
-      } catch (error) {
-        if (isMounted) {
-          toast.error(error instanceof Error ? error.message : "Failed to load activity schedules");
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    loadData();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!initialOpenAddModal || hasOpenedInitialModal.current || isLoading) return;
+    if (!shouldOpenAddModal || isLoading) {
+      setCreatingDraft(null);
+      return;
+    }
 
     const defaultDraft = createEmptyActivityScheduleDraft();
     const firstActivity = activities[0];
@@ -118,22 +122,20 @@ function ActivitySchedulesTableClient({
       defaultDraft.availableSeats = firstActivity.defaultCapacity;
     }
 
-    hasOpenedInitialModal.current = true;
-    setCreatingDraft(defaultDraft);
-  }, [activities, initialOpenAddModal, isLoading]);
+    setCreatingDraft((current) => current ?? defaultDraft);
+  }, [activities, isLoading, shouldOpenAddModal]);
 
-  const syncAddModalQueryParam = (isOpen: boolean) => {
-    const params = new URLSearchParams(searchParams.toString());
+  useEffect(() => {
+    const openAddModal = () => {
+      setShouldOpenAddModal(true);
+    };
 
-    if (isOpen) {
-      params.set("modal", "add");
-    } else if (params.get("modal") === "add") {
-      params.delete("modal");
-    }
+    window.addEventListener(DASHBOARD_MODAL_EVENTS.activitySchedulesAdd, openAddModal);
 
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  };
+    return () => {
+      window.removeEventListener(DASHBOARD_MODAL_EVENTS.activitySchedulesAdd, openAddModal);
+    };
+  }, []);
 
   const viewingSchedule = useMemo(
     () => schedules.find((schedule) => schedule.id === viewingScheduleId) ?? null,
@@ -150,10 +152,51 @@ function ActivitySchedulesTableClient({
     [schedules, deletingScheduleId]
   );
 
+  const overviewItems = useMemo(() => {
+    const totalSchedulesAll = allSchedules.length;
+    const upcomingSchedules = allSchedules.filter((schedule) => schedule.status === "scheduled").length;
+    const totalOpenSeats = allSchedules.reduce((sum, schedule) => sum + schedule.availableSeats, 0);
+    const averagePrice = totalSchedulesAll > 0
+      ? Math.round(allSchedules.reduce((sum, schedule) => sum + schedule.resolvedPrice, 0) / totalSchedulesAll)
+      : 0;
+
+    return [
+      {
+        key: "schedules",
+        label: "Sessions listed",
+        value: totalSchedulesAll,
+        helper: "Total schedules across all pages",
+        icon: CalendarClock,
+      },
+      {
+        key: "upcoming",
+        label: "Scheduled next",
+        value: upcomingSchedules,
+        helper: "Sessions still active and awaiting attendance",
+        icon: Clock3,
+      },
+      {
+        key: "seats",
+        label: "Open seats",
+        value: totalOpenSeats,
+        helper: "Remaining capacity across the listed sessions",
+        icon: Users,
+        tone: "secondary" as const,
+      },
+      {
+        key: "price",
+        label: "Avg. session price",
+        value: `$${averagePrice.toLocaleString()}`,
+        helper: "Average resolved selling price per scheduled session",
+        icon: CircleDollarSign,
+      },
+    ];
+  }, [allSchedules]);
+
   const handleCloseViewModal = () => setViewingScheduleId(null);
   const handleCloseAddModal = () => {
+    setShouldOpenAddModal(false);
     setCreatingDraft(null);
-    syncAddModalQueryParam(false);
   };
   const handleCloseEditModal = () => {
     setEditingScheduleId(null);
@@ -186,8 +229,8 @@ function ActivitySchedulesTableClient({
     void (async () => {
       setIsSaving(true);
       try {
-        const createdSchedule = await createActivitySchedule(creatingDraft);
-        setSchedules((current) => [createdSchedule, ...current]);
+        await createActivitySchedule(creatingDraft);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activitySchedules.all });
         toast.success("Activity schedule created successfully.");
         handleCloseAddModal();
       } catch (error) {
@@ -204,12 +247,8 @@ function ActivitySchedulesTableClient({
     void (async () => {
       setIsSaving(true);
       try {
-        const updatedSchedule = await updateActivitySchedule(editingDraft);
-        setSchedules((current) =>
-          current.map((schedule) =>
-            schedule.id === updatedSchedule.id ? updatedSchedule : schedule
-          )
-        );
+        await updateActivitySchedule(editingDraft);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activitySchedules.all });
         toast.success("Activity schedule updated successfully.");
         handleCloseEditModal();
       } catch (error) {
@@ -227,9 +266,7 @@ function ActivitySchedulesTableClient({
       setIsSaving(true);
       try {
         await deleteActivitySchedule(deletingSchedule.id);
-        setSchedules((current) =>
-          current.filter((schedule) => schedule.id !== deletingSchedule.id)
-        );
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activitySchedules.all });
         toast.success("Activity schedule deleted successfully.");
         handleCloseDeleteModal();
       } catch (error) {
@@ -242,15 +279,24 @@ function ActivitySchedulesTableClient({
 
   return (
     <>
-      <DynamicTable<ActivitySchedule>
-        columns={activityScheduleColumns}
-        data={schedules}
-        isLoading={isLoading}
-        filtersConfig={activityScheduleFilters}
-        pageSize={6}
-        searchPlaceholder="Search schedules..."
-        actions={actions}
-      />
+      <div className="mb-5 md:mb-6">
+        <TableOverview items={overviewItems} isLoading={isLoading} />
+      </div>
+
+      <DashboardSectionCard>
+        <DynamicTable<ActivitySchedule>
+          columns={activityScheduleColumns}
+          data={schedules}
+          isLoading={isLoading}
+          filtersConfig={activityScheduleFilters}
+          pageSize={8}
+          mode="server"
+          totalEntries={totalSchedules}
+          onQueryChange={setTableQuery}
+          searchPlaceholder="Search schedules..."
+          actions={actions}
+        />
+      </DashboardSectionCard>
 
       <SharedModal
         isOpen={Boolean(creatingDraft)}

@@ -1,83 +1,77 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import React, { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { CircleDollarSign, Compass, ListChecks, Users } from "lucide-react";
 import { toast } from "react-toastify";
+import DashboardSectionCard from "@/components/shared/layouts/DashboardSectionCard";
 import DynamicTable from "@/components/shared/table/DynamicTable";
+import TableOverview from "@/components/shared/table/TableOverview";
 import SharedModal from "@/components/shared/modal/SharedModal";
 import { activityColumns, activityFilters } from "@/config/tablePresets/activityColumns";
-import { createActivity, deleteActivity, fetchActivities, updateActivity } from "@/lib/activities";
+import { createActivity, deleteActivity, fetchActivities, fetchActivitiesPage, updateActivity } from "@/lib/activities";
+import { useServerTableData } from "@/hooks/useServerTableData";
+import { DASHBOARD_MODAL_EVENTS } from "@/lib/modal-events";
+import { queryKeys } from "@/lib/queryKeys";
 import ActivityAddForm from "./ActivityAddForm";
 import { createEmptyActivityDraft, type Activity } from "./data";
 import ActivityDeleteConfirm from "./ActivityDeleteConfirm";
 import ActivityDetailsView from "./ActivityDetailsView";
 import ActivityEditForm from "./ActivityEditForm";
 
-interface ActivitiesTableClientProps {
-  initialOpenAddModal?: boolean;
-}
-
-function ActivitiesTableClient({ initialOpenAddModal = false }: ActivitiesTableClientProps) {
-  const [activities, setActivities] = React.useState<Activity[]>([]);
-  const [isLoading, setIsLoading] = React.useState(true);
+function ActivitiesTableClient() {
+  const queryClient = useQueryClient();
+  const {
+    setTableQuery,
+    pageItems: activities,
+    overviewItems: allActivities,
+    totalEntries: totalActivities,
+    isLoading,
+  } = useServerTableData<Activity>({
+    queryKeyBase: queryKeys.activities.all,
+    initialPageSize: 5,
+    fetchPage: (query) =>
+      fetchActivitiesPage({
+        page: query.page,
+        limit: query.pageSize,
+        search: query.search || undefined,
+        category: typeof query.filters.category === "string" ? query.filters.category : undefined,
+        isActive:
+          typeof query.filters.isActive === "string"
+            ? query.filters.isActive
+            : undefined,
+        sort:
+          query.sort?.key === "title"
+            ? query.sort.direction === "asc"
+              ? "title_asc"
+              : "title_desc"
+            : query.sort?.key === "createdAt"
+              ? query.sort.direction === "asc"
+                ? "oldest"
+                : "newest"
+              : "newest",
+      }),
+    fetchOverview: fetchActivities,
+    staleTime: 45_000,
+  });
   const [creatingDraft, setCreatingDraft] = useState<Activity | null>(null);
   const [viewingActivityId, setViewingActivityId] = useState<string | null>(null);
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
   const [deletingActivityId, setDeletingActivityId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<Activity | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const hasOpenedInitialModal = useRef(false);
-  const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadActivities = async () => {
-      try {
-        setIsLoading(true);
-        const data = await fetchActivities();
-        if (isMounted) {
-          setActivities(data);
-        }
-      } catch (error) {
-        if (isMounted) {
-          toast.error(error instanceof Error ? error.message : "Failed to load activities");
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
+    const openAddModal = () => {
+      setCreatingDraft((current) => current ?? createEmptyActivityDraft());
     };
 
-    loadActivities();
+    window.addEventListener(DASHBOARD_MODAL_EVENTS.activitiesAdd, openAddModal);
 
     return () => {
-      isMounted = false;
+      window.removeEventListener(DASHBOARD_MODAL_EVENTS.activitiesAdd, openAddModal);
     };
   }, []);
-
-  useEffect(() => {
-    if (!initialOpenAddModal || hasOpenedInitialModal.current) return;
-
-    hasOpenedInitialModal.current = true;
-    setCreatingDraft(createEmptyActivityDraft());
-  }, [initialOpenAddModal]);
-
-  const syncAddModalQueryParam = (isOpen: boolean) => {
-    const params = new URLSearchParams(searchParams.toString());
-
-    if (isOpen) {
-      params.set("modal", "add");
-    } else if (params.get("modal") === "add") {
-      params.delete("modal");
-    }
-
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  };
 
   const viewingActivity = useMemo(
     () => activities.find((activity) => activity.id === viewingActivityId) ?? null,
@@ -94,10 +88,51 @@ function ActivitiesTableClient({ initialOpenAddModal = false }: ActivitiesTableC
     [activities, deletingActivityId]
   );
 
+  const overviewItems = useMemo(() => {
+    const activeActivities = allActivities.filter((activity) => activity.isActive).length;
+    const averageCapacity = totalActivities > 0
+      ? Math.round(allActivities.reduce((sum, activity) => sum + activity.defaultCapacity, 0) / totalActivities)
+      : 0;
+    const averagePrice = totalActivities > 0
+      ? Math.round(allActivities.reduce((sum, activity) => sum + activity.basePrice, 0) / totalActivities)
+      : 0;
+
+    return [
+      {
+        key: "activities",
+        label: "Experiences listed",
+        value: totalActivities,
+        helper: "Activities currently managed here",
+        icon: Compass,
+      },
+      {
+        key: "active",
+        label: "Active now",
+        value: activeActivities,
+        helper: "Experiences open for selling and scheduling",
+        icon: ListChecks,
+      },
+      {
+        key: "capacity",
+        label: "Avg. capacity",
+        value: averageCapacity,
+        helper: "Typical seats configured per session",
+        icon: Users,
+        tone: "secondary" as const,
+      },
+      {
+        key: "price",
+        label: "Avg. base price",
+        value: `$${averagePrice.toLocaleString()}`,
+        helper: "Average visible starting price across experiences",
+        icon: CircleDollarSign,
+      },
+    ];
+  }, [allActivities, totalActivities]);
+
   const handleCloseViewModal = () => setViewingActivityId(null);
   const handleCloseAddModal = () => {
     setCreatingDraft(null);
-    syncAddModalQueryParam(false);
   };
   const handleCloseEditModal = () => {
     setEditingActivityId(null);
@@ -112,9 +147,8 @@ function ActivitiesTableClient({ initialOpenAddModal = false }: ActivitiesTableC
       setIsSaving(true);
       try {
         await deleteActivity(deletingActivity.id);
-        setActivities((currentActivities) =>
-          currentActivities.filter((activity) => activity.id !== deletingActivity.id)
-        );
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activities.all });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activitySchedules.all });
         toast.success("Activity deleted successfully.");
 
         if (viewingActivityId === deletingActivity.id) {
@@ -159,12 +193,9 @@ function ActivitiesTableClient({ initialOpenAddModal = false }: ActivitiesTableC
     void (async () => {
       setIsSaving(true);
       try {
-        const updatedActivity = await updateActivity(editingDraft);
-        setActivities((currentActivities) =>
-          currentActivities.map((activity) =>
-            activity.id === updatedActivity.id ? updatedActivity : activity
-          )
-        );
+        await updateActivity(editingDraft);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activities.all });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activitySchedules.all });
         toast.success("Activity updated successfully.");
         handleCloseEditModal();
       } catch (error) {
@@ -181,8 +212,9 @@ function ActivitiesTableClient({ initialOpenAddModal = false }: ActivitiesTableC
     void (async () => {
       setIsSaving(true);
       try {
-        const refreshedActivities = await createActivity(creatingDraft);
-        setActivities(refreshedActivities);
+        await createActivity(creatingDraft);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activities.all });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activitySchedules.all });
         toast.success("Activity created successfully.");
         handleCloseAddModal();
       } catch (error) {
@@ -195,15 +227,24 @@ function ActivitiesTableClient({ initialOpenAddModal = false }: ActivitiesTableC
 
   return (
     <>
-      <DynamicTable<Activity>
-        columns={activityColumns}
-        data={activities}
-        isLoading={isLoading}
-        filtersConfig={activityFilters}
-        pageSize={5}
-        searchPlaceholder="Search experiences..."
-        actions={actions}
-      />
+      <div className="mb-5 md:mb-6">
+        <TableOverview items={overviewItems} isLoading={isLoading} />
+      </div>
+
+      <DashboardSectionCard>
+        <DynamicTable<Activity>
+          columns={activityColumns}
+          data={activities}
+          isLoading={isLoading}
+          filtersConfig={activityFilters}
+          pageSize={8}
+          mode="server"
+          totalEntries={totalActivities}
+          onQueryChange={setTableQuery}
+          searchPlaceholder="Search experiences..."
+          actions={actions}
+        />
+      </DashboardSectionCard>
 
       <SharedModal
         isOpen={Boolean(creatingDraft)}

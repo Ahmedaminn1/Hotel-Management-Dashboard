@@ -1,81 +1,79 @@
 "use client";
 
 import Image from "next/image";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import React, { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Activity, Building2, Users, Wrench } from "lucide-react";
 import { toast } from "react-toastify";
+import DashboardSectionCard from "@/components/shared/layouts/DashboardSectionCard";
 import DynamicTable from "@/components/shared/table/DynamicTable";
+import TableOverview from "@/components/shared/table/TableOverview";
 import SharedModal from "@/components/shared/modal/SharedModal";
 import { facilityColumns, facilityFilters } from "@/config/tablePresets/facilityColumns";
-import { createFacility, deleteFacility, fetchFacilities, updateFacility } from "@/lib/facilities";
+import {
+  createFacility,
+  deleteFacility,
+  fetchFacilities,
+  fetchFacilitiesPage,
+  updateFacility,
+} from "@/lib/facilities";
+import { useServerTableData } from "@/hooks/useServerTableData";
+import { DASHBOARD_MODAL_EVENTS } from "@/lib/modal-events";
+import { queryKeys } from "@/lib/queryKeys";
 import { createEmptyFacilityDraft } from "./data";
 import { Facility } from "@/types/facility";
 import FacilityForm from "./FacilityForm";
 
-interface FacilitiesTableClientProps {
-  initialOpenAddModal?: boolean;
-}
-
-function FacilitiesTableClient({ initialOpenAddModal = false }: FacilitiesTableClientProps) {
-  const [facilities, setFacilities] = React.useState<Facility[]>([]);
-  const [isLoading, setIsLoading] = React.useState(true);
+function FacilitiesTableClient() {
+  const queryClient = useQueryClient();
+  const {
+    setTableQuery,
+    pageItems: facilities,
+    overviewItems: allFacilities,
+    totalEntries: totalFacilitiesCount,
+    isLoading,
+  } = useServerTableData<Facility>({
+    queryKeyBase: queryKeys.facilities.all,
+    initialPageSize: 5,
+    fetchPage: (query) =>
+      fetchFacilitiesPage({
+        page: query.page,
+        limit: query.pageSize,
+        search: query.search || undefined,
+        status: typeof query.filters.status === "string" ? query.filters.status : undefined,
+        category:
+          typeof query.filters.category === "string" ? query.filters.category : undefined,
+        sort:
+          query.sort?.key === "name"
+            ? query.sort.direction === "asc"
+              ? "name_asc"
+              : "name_desc"
+            : query.sort?.key === "updatedAt"
+              ? query.sort.direction === "asc"
+                ? "oldest"
+                : "newest"
+              : "newest",
+      }),
+    fetchOverview: fetchFacilities,
+    staleTime: 45_000,
+  });
   const [creatingDraft, setCreatingDraft] = useState<Facility | null>(null);
   const [viewingFacilityId, setViewingFacilityId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<Facility | null>(null);
   const [deletingFacilityId, setDeletingFacilityId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const hasOpenedInitialModal = useRef(false);
-  const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadFacilities = async () => {
-      try {
-        setIsLoading(true);
-        const data = await fetchFacilities();
-        if (isMounted) {
-          setFacilities(data);
-        }
-      } catch (error) {
-        if (isMounted) {
-          toast.error(error instanceof Error ? error.message : "Failed to load facilities");
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
+    const openAddModal = () => {
+      setCreatingDraft((current) => current ?? createEmptyFacilityDraft());
     };
 
-    loadFacilities();
+    window.addEventListener(DASHBOARD_MODAL_EVENTS.facilitiesAdd, openAddModal);
 
     return () => {
-      isMounted = false;
+      window.removeEventListener(DASHBOARD_MODAL_EVENTS.facilitiesAdd, openAddModal);
     };
   }, []);
-
-  useEffect(() => {
-    if (!initialOpenAddModal || hasOpenedInitialModal.current) return;
-
-    hasOpenedInitialModal.current = true;
-    setCreatingDraft(createEmptyFacilityDraft());
-  }, [initialOpenAddModal]);
-
-  const syncAddModalQueryParam = (isOpen: boolean) => {
-    const params = new URLSearchParams(searchParams.toString());
-
-    if (isOpen) {
-      params.set("modal", "add");
-    } else if (params.get("modal") === "add") {
-      params.delete("modal");
-    }
-
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  };
 
   const viewingFacility = useMemo(
     () => facilities.find((f) => f._id === viewingFacilityId) ?? null,
@@ -89,10 +87,49 @@ function FacilitiesTableClient({ initialOpenAddModal = false }: FacilitiesTableC
     [facilities, deletingFacilityId]
   );
 
+  const overviewItems = useMemo(() => {
+    const totalFacilities = totalFacilitiesCount;
+    const activeFacilities = allFacilities.filter((facility) => facility.status === "Available").length;
+    const maintenanceFacilities = allFacilities.filter((facility) => facility.status === "Maintenance").length;
+    const totalCapacity = allFacilities.reduce((sum, facility) => sum + (facility.capacity ?? 0), 0);
+
+    return [
+      {
+        key: "total",
+        label: "Facilities listed",
+        value: totalFacilities,
+        helper: "Visible spaces managed from this table",
+        icon: Building2,
+      },
+      {
+        key: "available",
+        label: "Available now",
+        value: activeFacilities,
+        helper: "Facilities ready for guest use",
+        icon: Activity,
+      },
+      {
+        key: "maintenance",
+        label: "Need follow-up",
+        value: maintenanceFacilities,
+        helper: "Facilities currently in maintenance",
+        icon: Wrench,
+        tone: maintenanceFacilities > 0 ? "destructive" as const : "secondary" as const,
+      },
+      {
+        key: "capacity",
+        label: "Known capacity",
+        value: totalCapacity,
+        helper: "Combined guests across configured facilities",
+        icon: Users,
+        tone: "secondary" as const,
+      },
+    ];
+  }, [allFacilities, totalFacilitiesCount]);
+
   const handleCloseViewModal = () => setViewingFacilityId(null);
   const handleCloseAddModal = () => {
     setCreatingDraft(null);
-    syncAddModalQueryParam(false);
   };
   const handleCloseEditModal = () => setEditingDraft(null);
   const handleCloseDeleteModal = () => setDeletingFacilityId(null);
@@ -101,8 +138,8 @@ function FacilitiesTableClient({ initialOpenAddModal = false }: FacilitiesTableC
     if (!creatingDraft) return;
     setIsSaving(true);
     try {
-      const newFacility = await createFacility(creatingDraft);
-      setFacilities((current) => [...current, newFacility]);
+      await createFacility(creatingDraft);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.facilities.all });
       toast.success("Facility added successfully.");
       handleCloseAddModal();
     } catch (error) {
@@ -116,10 +153,8 @@ function FacilitiesTableClient({ initialOpenAddModal = false }: FacilitiesTableC
     if (!editingFacility) return;
     setIsSaving(true);
     try {
-      const updated = await updateFacility(editingFacility._id, editingFacility);
-      setFacilities((current) =>
-        current.map((f) => (f._id === updated._id ? updated : f))
-      );
+      await updateFacility(editingFacility._id, editingFacility);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.facilities.all });
       toast.success("Facility updated successfully.");
       handleCloseEditModal();
     } catch (error) {
@@ -136,7 +171,7 @@ function FacilitiesTableClient({ initialOpenAddModal = false }: FacilitiesTableC
       setIsSaving(true);
       try {
         await deleteFacility(deletingFacility._id);
-        setFacilities((current) => current.filter((f) => f._id !== deletingFacility._id));
+        await queryClient.invalidateQueries({ queryKey: queryKeys.facilities.all });
         toast.success("Facility deleted successfully.");
         handleCloseDeleteModal();
       } catch (error) {
@@ -165,15 +200,24 @@ function FacilitiesTableClient({ initialOpenAddModal = false }: FacilitiesTableC
 
   return (
     <>
-      <DynamicTable<Facility>
-        columns={facilityColumns}
-        data={facilities}
-        isLoading={isLoading}
-        filtersConfig={facilityFilters}
-        pageSize={5}
-        searchPlaceholder="Search facilities..."
-        actions={actions}
-      />
+      <div className="mb-5 md:mb-6">
+        <TableOverview items={overviewItems} isLoading={isLoading} />
+      </div>
+
+      <DashboardSectionCard>
+        <DynamicTable<Facility>
+          columns={facilityColumns}
+          data={facilities}
+          isLoading={isLoading}
+          filtersConfig={facilityFilters}
+          pageSize={5}
+          mode="server"
+          totalEntries={totalFacilitiesCount}
+          onQueryChange={setTableQuery}
+          searchPlaceholder="Search facilities..."
+          actions={actions}
+        />
+      </DashboardSectionCard>
 
       <SharedModal
         isOpen={Boolean(creatingDraft)}

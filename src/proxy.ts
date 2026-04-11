@@ -1,15 +1,12 @@
 import { getToken } from "next-auth/jwt";
 import { NextRequest, NextResponse } from "next/server";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const token = await getToken({
     req: request,
     secret: process.env.AUTH_SECRET,
   });
   const { pathname } = request.nextUrl;
-
-  const cookieNames = request.cookies.getAll().map(c => c.name);
-  console.log(`Middleware Run: Path: ${pathname}, Has Token: ${!!token}, Cookies: ${cookieNames.join(", ")}`);
 
   if (pathname === "/") {
     return NextResponse.redirect(new URL("/dashboard", request.url));

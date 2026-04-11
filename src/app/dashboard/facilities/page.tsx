@@ -1,37 +1,26 @@
 export const metadata = {
-  title: "Facility Management - Palm Mirage",
-  description: "Manage hotel facilities, status, and availability.",
+  title: "Facilities - Palm Mirage",
+  description: "Manage hotel-wide facilities, status, and availability.",
 };
 
 import FacilitiesTableClient from "@/components/Facilities/FacilitiesTableClient";
 import SubHeader from "@/components/shared/header/SubHeader";
+import DashboardPageShell from "@/components/shared/layouts/DashboardPageShell";
+import { DASHBOARD_MODAL_EVENTS } from "@/lib/modal-events";
 
-interface FacilitiesPageProps {
-  searchParams?: Promise<{
-    modal?: string;
-  }>;
-}
-
-export default async function FacilitiesPage({ searchParams }: FacilitiesPageProps) {
-  const resolvedSearchParams = await searchParams;
-  const shouldOpenAddModal = resolvedSearchParams?.modal === "add";
-
+export default function FacilitiesPage() {
   return (
-    <div className="min-h-screen bg-background px-6 py-8 text-foreground transition-colors duration-300 md:px-10 lg:px-12">
-      <div className="mx-auto max-w-7xl">
+    <DashboardPageShell>
         <SubHeader
-          title="Facility Management"
-          description="Manage your hotel's facilities such as pools, spas, gyms, and dining areas. Update their availability and maintenance status."
-          actionLabel="Add Facility"
-          actionHref="/dashboard/facilities?modal=add"
+          title="Facilities"
+          description="Manage property-wide facilities such as pools, spas, gyms, lounges, and shared hotel areas."
+          actionLabel="Add Hotel Facility"
+          actionEvent={DASHBOARD_MODAL_EVENTS.facilitiesAdd}
         />
 
-        <div className="space-y-6">
-          <section className="rounded-[40px] bg-card p-4 pt-0 pb-5 shadow-2xl shadow-black/5 ring-1 ring-border transition-colors duration-300">
-            <FacilitiesTableClient initialOpenAddModal={shouldOpenAddModal} />
-          </section>
+        <div className="space-y-5 md:space-y-6">
+          <FacilitiesTableClient />
         </div>
-      </div>
-    </div>
+    </DashboardPageShell>
   );
 }

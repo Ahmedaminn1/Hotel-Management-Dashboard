@@ -1,83 +1,79 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import React, { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { CircleDollarSign, CookingPot, Salad, Store } from "lucide-react";
 import { toast } from "react-toastify";
+import DashboardSectionCard from "@/components/shared/layouts/DashboardSectionCard";
 import DynamicTable from "@/components/shared/table/DynamicTable";
+import TableOverview from "@/components/shared/table/TableOverview";
 import SharedModal from "@/components/shared/modal/SharedModal";
 import { menuColumns, menuFilters } from "@/config/tablePresets/menuColumns";
-import { fetchMenuItems, createMenuItem, updateMenuItem, deleteMenuItem } from "@/lib/menu";
+import { fetchMenuItems, fetchMenuItemsPage, createMenuItem, updateMenuItem, deleteMenuItem } from "@/lib/menu";
+import { useServerTableData } from "@/hooks/useServerTableData";
+import { DASHBOARD_MODAL_EVENTS } from "@/lib/modal-events";
+import { queryKeys } from "@/lib/queryKeys";
 import { createEmptyMenuDraft, type MenuItem } from "./data";
 import MenuAddForm from "./MenuAddForm";
 import MenuEditForm from "./MenuEditForm";
 import MenuDetailsView from "./MenuDetailsView";
 import MenuDeleteConfirm from "./MenuDeleteConfirm";
 
-interface MenuTableClientProps {
-  initialOpenAddModal?: boolean;
-}
-
-function MenuTableClient({ initialOpenAddModal = false }: MenuTableClientProps) {
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+function MenuTableClient() {
+  const queryClient = useQueryClient();
+  const {
+    setTableQuery,
+    pageItems: menuItems,
+    overviewItems: allMenuItems,
+    totalEntries: totalItemsCount,
+    isLoading,
+  } = useServerTableData<MenuItem>({
+    queryKeyBase: queryKeys.menu.all,
+    initialPageSize: 6,
+    fetchPage: (query) =>
+      fetchMenuItemsPage({
+        page: query.page,
+        limit: query.pageSize,
+        search: query.search || undefined,
+        category: typeof query.filters.category === "string" ? query.filters.category : undefined,
+        available:
+          typeof query.filters.available === "string" ? query.filters.available : undefined,
+        sort:
+          query.sort?.key === "price"
+            ? query.sort.direction === "asc"
+              ? "price_asc"
+              : "price_desc"
+            : query.sort?.key === "name"
+              ? query.sort.direction === "asc"
+                ? "name_asc"
+                : "name_desc"
+              : query.sort?.key === "createdAt"
+                ? query.sort.direction === "asc"
+                  ? "oldest"
+                  : "newest"
+                : "newest",
+      }),
+    fetchOverview: fetchMenuItems,
+    staleTime: 45_000,
+  });
   const [isSaving, setIsSaving] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState<MenuItem | null>(null);
   const [viewingItemId, setViewingItemId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<MenuItem | null>(null);
-  const hasOpenedInitialModal = useRef(false);
-  const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadMenu = async () => {
-      try {
-        setIsLoading(true);
-        const data = await fetchMenuItems();
-        if (isMounted) {
-          setMenuItems(data);
-        }
-      } catch (error) {
-        if (isMounted) {
-          toast.error(error instanceof Error ? error.message : "Failed to load menu items");
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
+    const openAddModal = () => {
+      setCreatingDraft((current) => current ?? createEmptyMenuDraft());
     };
 
-    loadMenu();
+    window.addEventListener(DASHBOARD_MODAL_EVENTS.menuAdd, openAddModal);
 
     return () => {
-      isMounted = false;
+      window.removeEventListener(DASHBOARD_MODAL_EVENTS.menuAdd, openAddModal);
     };
   }, []);
-
-  useEffect(() => {
-    if (!initialOpenAddModal || hasOpenedInitialModal.current) return;
-
-    hasOpenedInitialModal.current = true;
-    setCreatingDraft(createEmptyMenuDraft());
-  }, [initialOpenAddModal]);
-
-  const syncAddModalQueryParam = (isOpen: boolean) => {
-    const params = new URLSearchParams(searchParams.toString());
-
-    if (isOpen) {
-      params.set("modal", "add");
-    } else if (params.get("modal") === "add") {
-      params.delete("modal");
-    }
-
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  };
 
   const viewingItem = useMemo(
     () => menuItems.find((item) => item.id === viewingItemId) ?? null,
@@ -94,10 +90,50 @@ function MenuTableClient({ initialOpenAddModal = false }: MenuTableClientProps) 
     [menuItems, deletingItemId]
   );
 
+  const overviewItems = useMemo(() => {
+    const totalItems = totalItemsCount;
+    const availableItems = allMenuItems.filter((item) => item.available).length;
+    const categories = new Set(allMenuItems.map((item) => item.category)).size;
+    const averagePrice = totalItems > 0
+      ? Math.round(allMenuItems.reduce((sum, item) => sum + item.price, 0) / totalItems)
+      : 0;
+
+    return [
+      {
+        key: "items",
+        label: "Menu products",
+        value: totalItems,
+        helper: "Items currently visible in the catalog",
+        icon: CookingPot,
+      },
+      {
+        key: "available",
+        label: "Available now",
+        value: availableItems,
+        helper: "Items currently ready for ordering",
+        icon: Store,
+      },
+      {
+        key: "categories",
+        label: "Categories used",
+        value: categories,
+        helper: "Menu sections currently represented",
+        icon: Salad,
+        tone: "secondary" as const,
+      },
+      {
+        key: "price",
+        label: "Average price",
+        value: `$${averagePrice.toLocaleString()}`,
+        helper: "Average listed price across menu products",
+        icon: CircleDollarSign,
+      },
+    ];
+  }, [allMenuItems, totalItemsCount]);
+
   const handleCloseViewModal = () => setViewingItemId(null);
   const handleCloseAddModal = () => {
     setCreatingDraft(null);
-    syncAddModalQueryParam(false);
   };
   const handleCloseEditModal = () => {
     setEditingItemId(null);
@@ -111,7 +147,7 @@ function MenuTableClient({ initialOpenAddModal = false }: MenuTableClientProps) 
     try {
       setIsSaving(true);
       await deleteMenuItem(deletingItem.id);
-      setMenuItems((prev) => prev.filter((item) => item.id !== deletingItem.id));
+      await queryClient.invalidateQueries({ queryKey: queryKeys.menu.all });
       toast.success("Item deleted successfully.");
       handleCloseDeleteModal();
     } catch (error) {
@@ -126,10 +162,8 @@ function MenuTableClient({ initialOpenAddModal = false }: MenuTableClientProps) 
 
     try {
       setIsSaving(true);
-      const updatedItem = await updateMenuItem(editingDraft);
-      setMenuItems((prev) =>
-        prev.map((item) => (item.id === updatedItem.id ? updatedItem : item))
-      );
+      await updateMenuItem(editingDraft);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.menu.all });
       toast.success("Item updated successfully.");
       handleCloseEditModal();
     } catch (error) {
@@ -144,8 +178,8 @@ function MenuTableClient({ initialOpenAddModal = false }: MenuTableClientProps) 
 
     try {
       setIsSaving(true);
-      const refreshedMenu = await createMenuItem(creatingDraft);
-      setMenuItems(refreshedMenu);
+      await createMenuItem(creatingDraft);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.menu.all });
       toast.success("Item created successfully.");
       handleCloseAddModal();
     } catch (error) {
@@ -176,15 +210,24 @@ function MenuTableClient({ initialOpenAddModal = false }: MenuTableClientProps) 
 
   return (
     <>
-      <DynamicTable<MenuItem>
-        columns={menuColumns}
-        data={menuItems}
-        isLoading={isLoading}
-        filtersConfig={menuFilters}
-        pageSize={10}
-        searchPlaceholder="Search menu products..."
-        actions={actions}
-      />
+      <div className="mb-5 md:mb-6">
+        <TableOverview items={overviewItems} isLoading={isLoading} />
+      </div>
+
+      <DashboardSectionCard>
+        <DynamicTable<MenuItem>
+          columns={menuColumns}
+          data={menuItems}
+          isLoading={isLoading}
+          filtersConfig={menuFilters}
+          pageSize={10}
+          mode="server"
+          totalEntries={totalItemsCount}
+          onQueryChange={setTableQuery}
+          searchPlaceholder="Search menu products..."
+          actions={actions}
+        />
+      </DashboardSectionCard>
 
       {/* Add Modal */}
       <SharedModal

@@ -2,10 +2,9 @@ import {
   Bed,
   Building2,
   Calendar,
-  Home,
-  Menu,
+  House,
+  UtensilsCrossed,
   Users,
-  Utensils
 } from "lucide-react";
 import { createElement } from "react";
 
@@ -13,8 +12,8 @@ import { NavItem } from "@/types/sidebar.types";
 
 export const NAV_ITEMS: NavItem[] = [
   {
-    label: "Dashboard",
-    icon: createElement(Home, { size: 18 }),
+    label: "Home",
+    icon: createElement(House, { size: 18 }),
     path: "/dashboard",
   },
   {
@@ -23,28 +22,74 @@ export const NAV_ITEMS: NavItem[] = [
     path: "/dashboard/users",
   },
   {
-    label: "Rooms",
-    icon: createElement(Bed, { size: 18 }),
-    path: "/dashboard/rooms",
-  },
-  {
     label: "Facilities",
     icon: createElement(Building2, { size: 18 }),
     path: "/dashboard/facilities",
   },
   {
+    label: "Rooms",
+    icon: createElement(Bed, { size: 18 }),
+    path: "/dashboard/rooms",
+    children: [
+      {
+        label: "All Rooms",
+        icon: null,
+        path: "/dashboard/rooms",
+      },
+      {
+        label: "Amenities",
+        icon: null,
+        path: "/dashboard/rooms/amenities",
+      },
+      {
+        label: "Bookings",
+        icon: null,
+        path: "/dashboard/rooms/bookings",
+      },
+    ],
+  },
+  {
     label: "Activities",
     icon: createElement(Calendar, { size: 18 }),
     path: "/dashboard/activities",
-  },
-  {
-    label: "Menu",
-    icon: createElement(Menu, { size: 18 }),
-    path: "/dashboard/menu",
+    children: [
+      {
+        label: "All Activities",
+        icon: null,
+        path: "/dashboard/activities",
+      },
+      {
+        label: "Schedules",
+        icon: null,
+        path: "/dashboard/activities/schedules",
+      },
+      {
+        label: "Bookings",
+        icon: null,
+        path: "/dashboard/activities/bookings",
+      },
+    ],
   },
   {
     label: "Restaurant",
-    icon: createElement(Utensils, { size: 18 }),
+    icon: createElement(UtensilsCrossed, { size: 18 }),
     path: "/dashboard/restaurant",
+    children: [
+      {
+        label: "Tables",
+        icon: null,
+        path: "/dashboard/restaurant",
+      },
+      {
+        label: "Menus",
+        icon: null,
+        path: "/dashboard/menu",
+      },
+      {
+        label: "Bookings",
+        icon: null,
+        path: "/dashboard/restaurant/bookings",
+      },
+    ],
   },
 ];

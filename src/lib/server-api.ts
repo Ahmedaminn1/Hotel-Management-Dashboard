@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-const API_BASE_URL = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000";
+const getBaseUrl = () => {
+    const url = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL;
+    if (url) return url.trim().replace(/\/$/, "");
+    if (process.env.NODE_ENV === "development") return "http://localhost:5000";
+    throw new Error("API Base URL is not configured (API_BASE_URL or NEXT_PUBLIC_API_BASE_URL required)");
+};
+
+const API_BASE_URL = getBaseUrl();
 
 interface ProxyOptions {
   backendPath: string;
   requireAuth?: boolean;
+  /** Unauthenticated GET only. Never combine with requireAuth. */
+  nextRevalidate?: number;
 }
 
 function buildBackendUrl(request: NextRequest, backendPath: string) {
@@ -42,24 +51,24 @@ async function getProxyHeaders(request: NextRequest, requireAuth: boolean) {
     headers.set("Content-Type", contentType);
   }
 
-  if (!requireAuth) {
-    return headers;
-  }
-
   const token = await getToken({
     req: request,
     secret: process.env.AUTH_SECRET,
   });
 
   const accessToken = typeof token?.accessToken === "string" ? token.accessToken : null;
-  const role = typeof token?.user?.role === "string" ? token.user.role : null;
 
   if (!accessToken) {
+    if (!requireAuth) {
+      return headers;
+    }
+
     throw new Error("Your session has expired. Please sign in again.");
   }
 
-  const authScheme = role === "admin" ? "System" : "Bearer";
-  headers.set("Authorization", `${authScheme} ${accessToken}`);
+  // Forward the current admin token even for non-auth-required dashboard GETs so
+  // backend catalog routes bypass any public cache and always reflect fresh CRUD changes.
+  headers.set("Authorization", `System ${accessToken}`);
 
   return headers;
 }
@@ -77,7 +86,7 @@ async function parseBackendResponse(response: Response) {
 
 export async function proxyApiRequest(
   request: NextRequest,
-  { backendPath, requireAuth = false }: ProxyOptions
+  { backendPath, requireAuth = false, nextRevalidate }: ProxyOptions
 ) {
   try {
     const [headers, body] = await Promise.all([
@@ -85,11 +94,19 @@ export async function proxyApiRequest(
       getProxyBody(request),
     ]);
 
+    const isSafeRevalidatedGet =
+      (request.method === "GET" || request.method === "HEAD") &&
+      typeof nextRevalidate === "number" &&
+      nextRevalidate > 0 &&
+      !requireAuth;
+
     const response = await fetch(buildBackendUrl(request, backendPath), {
       method: request.method,
       headers,
       body,
-      cache: "no-store",
+      ...(isSafeRevalidatedGet
+        ? { next: { revalidate: nextRevalidate } }
+        : { cache: "no-store" }),
     });
 
     const payload = await parseBackendResponse(response);
